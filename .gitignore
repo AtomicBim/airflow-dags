@@ -1,8 +1,55 @@
-# Исключить логи
+# Обновить .gitignore
+cat > .gitignore << 'EOF'
+# Логи Airflow
 logs/
 *.log
 
-# Исключить временные файлы
+# Временные файлы
 *.tmp
 *.swp
 .DS_Store
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.env
+
+# Базы данных
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets и конфиги с паролями
+.env.local
+.env.production
+secrets/
+*.key
+*.pem
+
+# IDE файлы
+.vscode/
+.idea/
+*.sublime-*
+
+# Дублирующие файлы compose
+docker-compose.yaml.save
+*.save
+*.backup
+
+# Airflow специфичные
+airflow.cfg.backup
+airflow_login.py
+standalone_admin_password.txt
+webserver_config.py
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+EOF
