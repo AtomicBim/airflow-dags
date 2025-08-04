@@ -131,6 +131,11 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./data:/opt/airflow/data
 
   airflow-scheduler:
     <<: *airflow-common
@@ -146,6 +151,11 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./data:/opt/airflow/data
 
   airflow-dag-processor:
     <<: *airflow-common
@@ -186,6 +196,11 @@ services:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./data:/opt/airflow/data
 
   airflow-triggerer:
     <<: *airflow-common
