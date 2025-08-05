@@ -12,4 +12,5 @@ def extract_ad_users(postgres_conn_id: str, output_path: str, **context) -> str:
     
     df.to_csv(output_path, index=False, encoding='utf-8')
     print(f"Экспортировано {len(df)} пользователей AD в {output_path}")
+    
     return output_path

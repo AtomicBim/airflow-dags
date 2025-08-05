@@ -47,4 +47,5 @@ def extract_users(url: str, username: str, password: str, output_path: str, **co
     df_users = df_users[['Id', 'Title', 'Email', 'LoginName']]
     df_users.to_csv(output_path, index=False, encoding='utf-8')
     print(f"Сохранено {len(df_users)} пользователей в {output_path}")
+    
     return output_path

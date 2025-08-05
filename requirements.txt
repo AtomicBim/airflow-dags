@@ -1,14 +1,9 @@
-beautifulsoup4  # bs4 - парсинг HTML/XML
-GitPython       # git - работа с Git репозиториями  
-python-gitlab   # gitlab - API для GitLab
-google-auth     # google - аутентификация Google
-gspread         # gspread - работа с Google Sheets
-numpy           # numpy - численные вычисления
-pandas          # pandas - анализ данных
-psycopg2-binary # psycopg2 - PostgreSQL драйвер
-requests        # requests - HTTP запросы
-requests-ntlm   # requests_ntlm - NTLM аутентификация
-SQLAlchemy      # sqlalchemy - ORM для баз данных
-tqdm            # tqdm - прогресс-бары
-urllib3         # urllib3 - HTTP клиент
-workalendar     # workalendar - рабочие календари
+apache-airflow-providers-postgres
+apache-airflow-providers-http
+pandas
+requests_ntlm
+SQLAlchemy
+beautifulsoup4
+workalendar
+gspread
+google-auth-oauthlib

@@ -18,4 +18,5 @@ def extract_families_from_gsheet(keyfile_path: str, sheet_key: str, worksheet_na
     df = pd.DataFrame(data_rows, columns=header)
     df.to_csv(output_path, index=False, quoting=csv.QUOTE_ALL, encoding='utf-8')
     print(f"Сохранено {len(df)} строк из Google Sheet в {output_path}")
+    
     return output_path
