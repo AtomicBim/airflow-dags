@@ -22,7 +22,7 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
 @dag(
     dag_id="sharepoint_etl_dag",
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
-    schedule_interval="*/15 * * * *",  # Каждые 15 минут
+    schedule="*/15 * * * *",  # Каждые 15 минут
     catchup=False,
     tags=["sharepoint", "etl"],
     doc_md="""

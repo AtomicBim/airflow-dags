@@ -21,7 +21,7 @@ GSHEET_KEYFILE_PATH = Variable.get("gsheet_service_account_path", "/opt/airflow/
 @dag(
     dag_id="gsheet_families_etl_dag",
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
-    schedule_interval="0 */2 * * *",  # Каждые 2 часа
+    schedule="0 */2 * * *",  # Каждые 2 часа
     catchup=False,
     tags=["gsheet", "etl"],
     doc_md="""
