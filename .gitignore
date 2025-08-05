@@ -1,7 +1,7 @@
 # Обновить .gitignore
 cat > .gitignore << 'EOF'
 # Логи и данные Airflow
-# data/
+data/
 logs/
 *.log
 
