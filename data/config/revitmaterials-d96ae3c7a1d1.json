@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "revitmaterials",
+  "private_key_id": "d96ae3c7a1d161e5a51de86832f7c657bf5e6f14",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDFIvOx7w90NQv5\nbmD5k910DqU+NfN92mwjNAY8qmX5bcnNXVDORefOlkPFr4HgofaE8nK+lwXuZPVz\nodFe1qPu3t1pNi5i88ywfctwlJ+vntdJfTT05OpilACvIF2qGUtnT8Xi7nhx9yf9\nUrOdxnzhUEaNSTo5webJy/Qd1i4UtpZQp+JUjpnhT9SSo4j959Z57chT3IKYShzy\ntic5C3bnPG66tnE7Blfn43aEPfYx3vZ/C5pstQZEyZ8+hbDbyGQxMYANxtxUNR0C\n1WGFyOBFueWMDZoYtGUejehsMT3RKhtZLtjqmfqNgd91mLxfmoPRqoqhkpmGXReR\nq9yDv6MJAgMBAAECggEAA5oz0lFQRWXFF38tx08X/vYtN6xkNpfzyGvmXkbt20eR\n5mO5ZYo6UMMxr1ku73l+MqfnMrY580UwhWGpsgjhkNdNO/jeaEv/YPfs1wc8Ph5n\nXY4rwNA1u+yWRkek4TDE+OO+CxDOWM90/Ah+GZi7hkwsJzT1RazA/c3b4uIGUGC3\n4o7jAMju/6JcIVak+omNEekYhbkm4in8P2pt15nC7t9Vg7gGbn/XoNBo2cOqBXI7\nQ/BuuwriSiAhG7xzdifE7QMBD7YnjoqTaiFdl8wWqOmsaFbKt5sDWl5YUjoK5rDv\nZK/8RtE+/6EoNK2as2qpCeVP3fcmrRBUEnc3v7AgAQKBgQDuIBK++4KN2BhFcjsI\nZucfJWsKQTozdysCNUX98dWU86M9q8T47wC4HOaXagLxzYHkGvql3aLvPPoS+/4f\nYiDOHshwioF/bXm2O10gCQkmGnUVSMJckdO+NjSWaUyU434JjD35A4o9Mdpek4b3\nmL7HgoGIyzd6QxSZm8Jo326TCQKBgQDT7zg6DybZctQsczNnPOCOsAUHLt32R1L/\nJmTdngMWtG1yme9IRCAah/uJL4hSIAMRUjpjoeANOyGi+7Ulkq/aKrkimTmDTSHW\n484IxPrp0fyeGNG0HdEcCjS55ysssxCJzYBRXUAN1MD+jtlX0vKnS4EzKFAMI3MA\ngeagf7yQAQKBgGw9jAfgD6ImXjIDEK5rCBfyTEunBquqOZSRXrVmHi3M6aD42VpG\nWc9W48Jj397GCYsEcHbA3nVdBFdo0ES3uC25dGcjrmWb/71EErqjINN/J0V7g03M\nw7Esto7AYp0zI3F3nBv67fWPGbHv4WPevKm3uuXRafBbWZvRX3eISJzxAoGAJWYo\niO5Vj7fYw0NNBeHTSrq7GGpn1ub9OXNgB0+0AdSzH68Ub6897xCiDbJqnvtxLyRQ\nk3ZkYFFX/Tfn3oqFJ720T+u0H3yEBTTMDfYcxRg+OPPuRZehaA5RAaFOmCO9PmQa\nScFn5UjvCbzRk9Lw6R7E3O83OP0kdSl3Nkl0UAECgYEApY9+ABQ85qRS/C2vW2ii\nqEk9kNsQGYaGm2If5httxbHyzkEU1PC/W/IOaee0pjLYdAgDnfhoqwOJ1ejl9FxW\nhT+adWBL/bip9Qnmo9dI+AI0Nyc1MRl7ZPiBBBEMA+oBRopjaJ9b3+zzpktDSMZt\nH+/Ob1hfHb97AWbfY+QKiYY=\n-----END PRIVATE KEY-----\n",
+  "client_email": "extractor-gsheet-families@revitmaterials.iam.gserviceaccount.com",
+  "client_id": "103931858726327559244",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/extractor-gsheet-families%40revitmaterials.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
