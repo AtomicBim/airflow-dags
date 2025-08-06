@@ -8,7 +8,7 @@ from airflow.models.variable import Variable
 
 from coord_sharepoint_etl.extract import gsheet
 from coord_sharepoint_etl.transform import gsheet as transform_gs
-from coord_sharepoint_etl.load import sharepoint as load_sp # Переиспользуем тот же загрузчик!
+from coord_sharepoint_etl.load import sharepoint as load_sp
 
 DATA_ROOT = Path(Variable.get("ETL_DATA_ROOT_PATH", default_var="/tmp/data"))
 DATA_ROOT.mkdir(parents=True, exist_ok=True)
@@ -16,7 +16,8 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
 # Ключи и пути лучше хранить в Airflow Variables
 GSHEET_KEY = Variable.get("gsheet_families_key", "1C3AJ-0uzoIr97ZaVqeOsi-JbqkYKhsirsoSRhOc1Xnw")
 GSHEET_WORKSHEET = Variable.get("gsheet_families_worksheet", "DB_Семейства")
-GSHEET_KEYFILE_PATH = Variable.get("gsheet_service_account_path", "/opt/airflow/config/revitmaterials-d96ae3c7a1d1.json")
+# Исправленный путь - файл должен быть в /opt/airflow/data/config/
+GSHEET_KEYFILE_PATH = Variable.get("gsheet_service_account_path", "/opt/airflow/data/config/revitmaterials-d96ae3c7a1d1.json")
 
 @dag(
     dag_id="gsheet_families_etl_dag",

@@ -1,6 +1,6 @@
 import pandas as pd
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-from sqlalchemy import text # Важный импорт
+from sqlalchemy import text
 
 def load_data_to_postgres(transformed_data_path: str, postgres_conn_id: str, **context) -> None:
     """
@@ -8,7 +8,7 @@ def load_data_to_postgres(transformed_data_path: str, postgres_conn_id: str, **c
     используя единый SQLAlchemy engine.
     """
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
-    engine = hook.get_sqlalchemy_engine() # Получаем "движок" SQLAlchemy
+    engine = hook.get_sqlalchemy_engine()  # Получаем engine, не connection!
     df = pd.read_csv(transformed_data_path)
     
     staging_table = "stg_ext_sharepoint_coord"
@@ -16,7 +16,6 @@ def load_data_to_postgres(transformed_data_path: str, postgres_conn_id: str, **c
     schema = "datalake"
 
     # Динамически создаем часть запроса для обновления
-    # Это делает код более гибким, если в будущем изменятся колонки
     update_cols = [col for col in df.columns if col != 'guid']
     set_clause = ", ".join([f'"{col}" = EXCLUDED."{col}"' for col in update_cols])
 
@@ -28,24 +27,26 @@ def load_data_to_postgres(transformed_data_path: str, postgres_conn_id: str, **c
           {set_clause};
     """
 
-    # Используем одно соединение для всех операций
-    with engine.connect() as conn:
-        # Используем транзакцию: либо все выполнится, либо ничего
-        with conn.begin():
-            # Шаг 1: Очистка staging-таблицы
-            print(f"Очистка staging-таблицы {schema}.{staging_table}...")
-            conn.execute(text(f"TRUNCATE TABLE {schema}.{staging_table}"))
-            
-            # Шаг 2: Загрузка данных в staging-таблицу
-            print("Загрузка данных в staging-таблицу...")
-            # Теперь to_sql получает правильный объект 'conn'
-            df.to_sql(staging_table, conn, schema=schema, if_exists='append', index=False)
-            print(f"Загружено {len(df)} строк в staging.")
+    # Используем engine напрямую с pandas и для SQL-запросов
+    with engine.begin() as conn:  # begin() автоматически создаст транзакцию
+        # Шаг 1: Очистка staging-таблицы
+        print(f"Очистка staging-таблицы {schema}.{staging_table}...")
+        conn.execute(text(f"TRUNCATE TABLE {schema}.{staging_table}"))
+        
+        # Шаг 2: Загрузка данных в staging-таблицу
+        print("Загрузка данных в staging-таблицу...")
+        # Передаем engine в to_sql, а не connection
+        df.to_sql(
+            staging_table, 
+            engine,  # Используем engine вместо conn!
+            schema=schema, 
+            if_exists='append', 
+            index=False,
+            method='multi'  # Для более быстрой вставки
+        )
+        print(f"Загружено {len(df)} строк в staging.")
 
-            # Шаг 3: Слияние данных из staging в основную таблицу
-            print("Обновление основной таблицы...")
-            # Выполняем наш SQL-запрос
-            conn.execute(text(merge_sql))
-            print("Основная таблица успешно обновлена.")
-
-            # тест
+        # Шаг 3: Слияние данных из staging в основную таблицу
+        print("Обновление основной таблицы...")
+        conn.execute(text(merge_sql))
+        print("Основная таблица успешно обновлена.")
