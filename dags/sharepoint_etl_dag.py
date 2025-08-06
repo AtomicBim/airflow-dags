@@ -44,7 +44,7 @@ def sharepoint_etl():
         return extract_sp.extract_tasks(
             url=sharepoint_conn.host,
             username=sharepoint_conn.login,
-            password=sharepoint_conn.get_password(),
+            password=sharepoint_conn.password,
             output_path=output_path
         )
 
@@ -54,7 +54,7 @@ def sharepoint_etl():
         return extract_sp.extract_users(
             url=sharepoint_conn.host,
             username=sharepoint_conn.login,
-            password=sharepoint_conn.get_password(),
+            password=sharepoint_conn.password,
             output_path=output_path
         )
 
