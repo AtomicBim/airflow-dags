@@ -1,64 +1,56 @@
-from __future__ import annotations
+import pandas as pd
+from airflow.providers.postgres.hooks.postgres import PostgresHook
+from sqlalchemy import text
 
-import pendulum
-from pathlib import Path
-
-from airflow.decorators import dag, task
-from airflow.models.variable import Variable
-
-from coord_sharepoint_etl.extract import gsheet
-from coord_sharepoint_etl.transform import gsheet as transform_gs
-from coord_sharepoint_etl.load import sharepoint as load_sp
-
-DATA_ROOT = Path(Variable.get("ETL_DATA_ROOT_PATH", default_var="/tmp/data"))
-DATA_ROOT.mkdir(parents=True, exist_ok=True)
-
-# Ключи и пути лучше хранить в Airflow Variables
-GSHEET_KEY = Variable.get("gsheet_families_key", "1C3AJ-0uzoIr97ZaVqeOsi-JbqkYKhsirsoSRhOc1Xnw")
-GSHEET_WORKSHEET = Variable.get("gsheet_families_worksheet", "DB_Семейства")
-# Исправленный путь - файл должен быть в /opt/airflow/data/config/
-GSHEET_KEYFILE_PATH = Variable.get("gsheet_service_account_path", "/opt/airflow/data/config/revitmaterials-d96ae3c7a1d1.json")
-
-@dag(
-    dag_id="gsheet_families_etl_dag",
-    start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
-    schedule="0 */2 * * *",  # Каждые 2 часа
-    catchup=False,
-    tags=["gsheet", "etl"],
-    doc_md="""
-    ETL-пайплайн для данных о семействах из Google Sheets.
-    Загружает данные в ту же таблицу, что и SharePoint, используя общую модель.
+def load_data_to_postgres(transformed_data_path: str, postgres_conn_id: str, **context) -> None:
     """
-)
-def gsheet_families_etl():
-
-    @task
-    def extract_data_from_gsheet() -> str:
-        output_path = str(DATA_ROOT / "gsheet_export_families.csv")
-        return gsheet.extract_families_from_gsheet(
-            keyfile_path=GSHEET_KEYFILE_PATH,
-            sheet_key=GSHEET_KEY,
-            worksheet_name=GSHEET_WORKSHEET,
-            output_path=output_path
-        )
-
-    @task
-    def transform_gsheet_data(raw_data_path: str) -> str:
-        output_path = str(DATA_ROOT / "gsheet_transformed.csv")
-        return transform_gs.transform_gsheet_data(
-            families_path=raw_data_path,
-            output_path=output_path
-        )
+    Загружает данные в staging, а затем обновляет основную таблицу,
+    используя SQLAlchemy engine.
+    """
+    hook = PostgresHook(postgres_conn_id=postgres_conn_id)
+    engine = hook.get_sqlalchemy_engine()
+    df = pd.read_csv(transformed_data_path)
     
-    @task
-    def load_gsheet_data(transformed_path: str):
-        load_sp.load_data_to_postgres(
-            transformed_data_path=transformed_path,
-            postgres_conn_id="tim_db_postgres"
-        )
-    
-    raw_csv = extract_data_from_gsheet()
-    transformed_csv = transform_gsheet_data(raw_data_path=raw_csv)
-    load_gsheet_data(transformed_path=transformed_csv)
+    staging_table = "stg_ext_sharepoint_coord"
+    target_table = "ext_sharepoint_coord"
+    schema = "datalake"
 
-gsheet_families_etl()
+    # Динамически создаем часть запроса для обновления
+    update_cols = [col for col in df.columns if col != 'guid']
+    set_clause = ", ".join([f'"{col}" = EXCLUDED."{col}"' for col in update_cols])
+
+    # Финальный SQL-запрос для слияния данных (UPSERT)
+    merge_sql = f"""
+        INSERT INTO {schema}.{target_table} ({','.join(f'"{col}"' for col in df.columns)})
+        SELECT {','.join(f'"{col}"' for col in df.columns)} FROM {schema}.{staging_table}
+        ON CONFLICT (guid) DO UPDATE SET
+          {set_clause};
+    """
+
+    # Выполняем операции последовательно
+    # Шаг 1: Очистка staging-таблицы
+    print(f"Очистка staging-таблицы {schema}.{staging_table}...")
+    with engine.connect() as conn:
+        conn.execute(text(f"TRUNCATE TABLE {schema}.{staging_table}"))
+        conn.commit()
+    
+    # Шаг 2: Загрузка данных в staging-таблицу
+    # pandas.to_sql требует engine, не connection
+    print("Загрузка данных в staging-таблицу...")
+    df.to_sql(
+        staging_table, 
+        engine,  # Используем engine напрямую
+        schema=schema, 
+        if_exists='append', 
+        index=False,
+        method='multi',  # Для более быстрой вставки
+        chunksize=1000  # Загружаем порциями для больших данных
+    )
+    print(f"Загружено {len(df)} строк в staging.")
+
+    # Шаг 3: Слияние данных из staging в основную таблицу
+    print("Обновление основной таблицы...")
+    with engine.connect() as conn:
+        conn.execute(text(merge_sql))
+        conn.commit()
+    print("Основная таблица успешно обновлена.")
