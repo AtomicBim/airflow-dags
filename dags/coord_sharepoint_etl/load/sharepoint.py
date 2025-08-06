@@ -47,3 +47,5 @@ def load_data_to_postgres(transformed_data_path: str, postgres_conn_id: str, **c
             # Выполняем наш SQL-запрос
             conn.execute(text(merge_sql))
             print("Основная таблица успешно обновлена.")
+
+            # тест
