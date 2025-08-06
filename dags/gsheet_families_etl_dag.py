@@ -20,7 +20,7 @@ GSHEET_WORKSHEET = Variable.get("gsheet_families_worksheet", "DB_Семейст�
 GSHEET_KEYFILE_PATH = Variable.get("gsheet_service_account_path", "/opt/airflow/data/config/revitmaterials-d96ae3c7a1d1.json")
 
 @dag(
-    dag_id="gsheet_etl_dag",
+    dag_id="gsheet_families_etl_dag",
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
     schedule="0 */2 * * *",  # Каждые 2 часа
     catchup=False,
