@@ -2,14 +2,13 @@ import pandas as pd
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from sqlalchemy import text
 
-def load_data_to_postgres(transformed_data_path: str, postgres_conn_id: str, **context) -> None:
+def load_data_to_postgres(df: pd.DataFrame, postgres_conn_id: str, **context):
     """
     Загружает данные в staging, а затем обновляет основную таблицу,
     используя единый SQLAlchemy engine.
     """
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
-    engine = hook.get_sqlalchemy_engine()  # Получаем engine, не connection!
-    df = pd.read_csv(transformed_data_path)
+    engine = hook.get_sqlalchemy_engine()
     
     staging_table = "stg_ext_sharepoint_coord"
     target_table = "ext_sharepoint_coord"

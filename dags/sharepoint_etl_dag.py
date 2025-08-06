@@ -1,22 +1,21 @@
 from __future__ import annotations
 
 import pendulum
+import pandas as pd
 from pathlib import Path
 
 from airflow.decorators import dag, task
-from airflow.models.param import Param
 from airflow.models.variable import Variable
-from airflow.providers.http.hooks.http import HttpHook
 from airflow.hooks.base import BaseHook
 
-# Импорт наших модульных функций
+# Импорт модульных функций
 from coord_sharepoint_etl.extract import sharepoint as extract_sp, tim_db
 from coord_sharepoint_etl.transform import sharepoint as transform_sp
 from coord_sharepoint_etl.load import sharepoint as load_sp
 
-# Получаем путь для временных данных из переменных Airflow
-# Убедитесь, что переменная ETL_DATA_ROOT_PATH задана в UI Airflow (/opt/airflow/data)
-DATA_ROOT = Path(Variable.get("ETL_DATA_ROOT_PATH", default_var="/tmp/data"))
+# --- Переменные Airflow ---
+# Используем единый корень для данных, но с отдельной подпапкой
+DATA_ROOT = Path(Variable.get("ETL_DATA_ROOT_PATH", default_var="/tmp/data")) / "sharepoint"
 DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
 @dag(
@@ -26,20 +25,24 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
     catchup=False,
     tags=["sharepoint", "etl"],
     doc_md="""
-    ETL-пайплайн для извлечения, обработки и загрузки данных из SharePoint и связанной БД.
-    - Извлекает Задачи и Пользователей из SharePoint
-    - Извлекает данные AD из БД pluginsdb
-    - Трансформирует и объединяет данные
-    - Загружает результат в DWH (datalake.ext_sharepoint_coord) через staging-таблицу
+    # ETL-пайплайн для данных из SharePoint и связанной БД
+    
+    Использует файловую систему для обмена данными между задачами.
+    
+    ## Процесс:
+    - Извлекает Задачи и Пользователей из SharePoint.
+    - Извлекает данные AD из БД.
+    - Трансформирует и объединяет данные.
+    - Загружает результат в DWH (datalake.ext_sharepoint_coord).
     """
 )
 def sharepoint_etl():
     
-    # Получение данных для подключения из Airflow Connections
     sharepoint_conn = BaseHook.get_connection("askit_http_sharepoint_tim")
     
     @task
     def extract_sharepoint_tasks() -> str:
+        """Извлекает задачи из SharePoint и сохраняет в CSV."""
         output_path = str(DATA_ROOT / "sharepoint_export_tasks.csv")
         return extract_sp.extract_tasks(
             url=sharepoint_conn.host,
@@ -50,6 +53,7 @@ def sharepoint_etl():
 
     @task
     def extract_sharepoint_users() -> str:
+        """Извлекает пользователей из SharePoint и сохраняет в CSV."""
         output_path = str(DATA_ROOT / "sharepoint_export_users.csv")
         return extract_sp.extract_users(
             url=sharepoint_conn.host,
@@ -60,12 +64,16 @@ def sharepoint_etl():
 
     @task
     def extract_ad_data() -> str:
+        """Извлекает данные пользователей AD из БД."""
         output_path = str(DATA_ROOT / "tim_export_ad_user.csv")
-        # Используем Connection ID tim_db_pluginsdb из вашего скриншота
-        return tim_db.extract_ad_users(postgres_conn_id="tim_db_pluginsdb", output_path=output_path)
+        return tim_db.extract_ad_users(
+            postgres_conn_id="tim_db_pluginsdb", 
+            output_path=output_path
+        )
 
     @task
     def transform_data(tasks_path: str, users_path: str, ad_path: str) -> str:
+        """Трансформирует и объединяет извлеченные данные."""
         output_path = str(DATA_ROOT / "sharepoint_transformed.csv")
         return transform_sp.transform_sharepoint_data(
             tasks_path=tasks_path,
@@ -75,10 +83,14 @@ def sharepoint_etl():
         )
 
     @task
-    def load_data(transformed_path: str):
-        # Используем Connection ID tim_db_postgres (DWH) из вашего скриншота
+    def load_data_to_db(transformed_path: str):
+        """Загружает трансформированные данные в DWH."""
+        # ИСПРАВЛЕНИЕ: Сначала читаем CSV в DataFrame
+        df = pd.read_csv(transformed_path)
+        
+        # Затем передаем DataFrame в функцию загрузки
         load_sp.load_data_to_postgres(
-            transformed_data_path=transformed_path,
+            df=df,
             postgres_conn_id="tim_db_postgres"
         )
     
@@ -89,6 +101,6 @@ def sharepoint_etl():
     
     transformed_csv = transform_data(tasks_path=tasks_csv, users_path=users_csv, ad_path=ad_csv)
     
-    load_data(transformed_path=transformed_csv)
+    load_data_to_db(transformed_path=transformed_csv)
 
 sharepoint_etl()
