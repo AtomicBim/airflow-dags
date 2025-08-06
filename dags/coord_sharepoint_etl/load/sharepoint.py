@@ -1,6 +1,6 @@
 import pandas as pd
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-from sqlalchemy import create_engine
+from sqlalchemy import text
 
 def load_data_to_postgres(transformed_data_path: str, postgres_conn_id: str, **context) -> None:
     """Загружает данные в staging, а затем обновляет основную таблицу."""
@@ -12,42 +12,35 @@ def load_data_to_postgres(transformed_data_path: str, postgres_conn_id: str, **c
     target_table = "ext_sharepoint_coord"
     schema = "datalake"
 
-    # Шаг 1: Очистка и загрузка в staging-таблицу
-    with engine.begin() as conn:
-        print(f"Очистка staging-таблицы {schema}.{staging_table}...")
-        conn.execute(f"TRUNCATE TABLE {schema}.{staging_table}")
-        print("Загрузка данных в staging-таблицу...")
-        df.to_sql(staging_table, conn, schema=schema, if_exists='append', index=False)
-        print(f"Загружено {len(df)} строк.")
+    # Динамически создаем часть запроса для обновления
+    # Это делает код более гибким, если в будущем изменятся колонки
+    update_cols = [col for col in df.columns if col != 'guid']
+    set_clause = ", ".join([f'"{col}" = EXCLUDED."{col}"' for col in update_cols])
 
-    # Шаг 2: Merge (Upsert) из staging в основную таблицу
+    # Финальный SQL-запрос для слияния данных (UPSERT)
     merge_sql = f"""
-        INSERT INTO {schema}.{target_table} ({','.join(df.columns)})
-        SELECT {','.join(df.columns)} FROM {schema}.{staging_table}
+        INSERT INTO {schema}.{target_table} ({','.join(f'"{col}"' for col in df.columns)})
+        SELECT {','.join(f'"{col}"' for col in df.columns)} FROM {schema}.{staging_table}
         ON CONFLICT (guid) DO UPDATE SET
-          title = EXCLUDED.title,
-          created = EXCLUDED.created,
-          closing_date = EXCLUDED.closing_date,
-          work_days_duration = EXCLUDED.work_days_duration,
-          short_description = EXCLUDED.short_description,
-          detailed_description = EXCLUDED.detailed_description,
-          program = EXCLUDED.program,
-          discipline = EXCLUDED.discipline,
-          priority = EXCLUDED.priority,
-          author = EXCLUDED.author,
-          type_request = EXCLUDED.type_request,
-          status = EXCLUDED.status,
-          comment = EXCLUDED.comment,
-          responsible = EXCLUDED.responsible,
-          department = EXCLUDED.department,
-          project_section = EXCLUDED.project_section,
-          type_request_group = EXCLUDED.type_request_group,
-          discipline_group = EXCLUDED.discipline_group;
+          {set_clause};
     """
-    
-    with hook.get_conn() as conn:
-        with conn.cursor() as cursor:
+
+# Используем одно соединение для всех операций
+    with engine.connect() as conn:
+        # Используем транзакцию: либо все выполнится, либо ничего
+        with conn.begin():
+            # Шаг 1: Очистка staging-таблицы
+            print(f"Очистка staging-таблицы {schema}.{staging_table}...")
+            conn.execute(text(f"TRUNCATE TABLE {schema}.{staging_table}"))
+            
+            # Шаг 2: Загрузка данных в staging-таблицу
+            print("Загрузка данных в staging-таблицу...")
+            # Теперь to_sql получает правильный объект 'conn'
+            df.to_sql(staging_table, conn, schema=schema, if_exists='append', index=False)
+            print(f"Загружено {len(df)} строк в staging.")
+
+            # Шаг 3: Слияние данных из staging в основную таблицу
             print("Обновление основной таблицы...")
-            cursor.execute(merge_sql)
-            conn.commit()
+            # Выполняем наш SQL-запрос
+            conn.execute(text(merge_sql))
             print("Основная таблица успешно обновлена.")
