@@ -1,3 +1,4 @@
+Roman, [07.08.2025 11:55]
 import pandas as pd
 import uuid
 
@@ -55,6 +56,8 @@ def transform_gsheet_data_df(df_families: pd.DataFrame, **context) -> pd.DataFra
     # Удаление лишних Unnamed-столбцов
     df_families = df_families.loc[:, ~df_families.columns.str.contains('^Unnamed', na=False)]
 
+    # --- ИЗМЕНЕНИЕ: Генерация детерминированного GUID ---
+    # Этот шаг должен быть до удаления дубликатов, чтобы GUID был основан на исходных данных
     print("Генерация детерминированных GUID...")
     df_families['guid'] = df_families.apply(generate_deterministic_guid, axis=1)
     print("GUID сгенерированы.")
@@ -86,7 +89,8 @@ def transform_gsheet_data_df(df_families: pd.DataFrame, **context) -> pd.DataFra
         df_families.rename(columns={'Раздел': 'discipline'}, inplace=True)
     elif 'discipline' not in df_families.columns:
         df_families['discipline'] = 'Не указано'
-        # Сопоставление групп дисциплин
+
+    # Сопоставление групп дисциплин
     discipline_mapping = {
         'АР': 'Архитектура', 'ВК': 'Инженерные системы', 'ОВ': 'Инженерные системы',
         'КЖ': 'Конструкции', 'ТХ': 'Инженерные системы', 'ЭЛ': 'Электросети и связь',
@@ -102,14 +106,12 @@ def transform_gsheet_data_df(df_families: pd.DataFrame, **context) -> pd.DataFra
     df_families['status'] = 'Закрыта'
     df_families['comment'] = df_families['Описание изменения'] if 'Описание изменения' in df_families.columns else ''
     df_families['responsible'] = df_families['Ответственный'] if 'Ответственный' in df_families.columns else 'Нет данных'
-
     # Итоговая структура
     columns_order = [
         'title', 'guid', 'created', 'closing_date', 'work_days_duration', 'short_description', 'program',
         'discipline', 'discipline_group', 'priority', 'author', 'type_request', 
         'type_request_group', 'status', 'comment', 'responsible'
     ]
-    
     # Добавляем department и project_section в final_order
     final_order = columns_order + ['department', 'project_section']
     
@@ -130,6 +132,14 @@ def transform_gsheet_data_df(df_families: pd.DataFrame, **context) -> pd.DataFra
     if 'created' in df_families.columns:
         cutoff_date = pd.Timestamp("2022-01-01")
         df_families = df_families[pd.to_datetime(df_families["created"]) >= cutoff_date]
+    
+    # --- ИСПРАВЛЕНИЕ: Удаляем дубликаты по GUID перед загрузкой ---
+    # Это гарантирует, что в загружаемом пакете не будет конфликтующих ключей.
+    initial_rows = len(df_families)
+    df_families.drop_duplicates(subset=['guid'], keep='first', inplace=True)
+    final_rows = len(df_families)
+    if initial_rows > final_rows:
+        print(f"Удалено {initial_rows - final_rows} дубликатов по guid.")
     
     print(f"Трансформация GSheet завершена. Обработано {len(df_families)} строк.")
     
