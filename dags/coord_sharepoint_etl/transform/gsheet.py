@@ -1,4 +1,3 @@
-Roman, [07.08.2025 11:55]
 import pandas as pd
 import uuid
 
