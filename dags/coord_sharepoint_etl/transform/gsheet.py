@@ -9,6 +9,25 @@ def check_responsible(val):
     first = val.split(",")[0].strip().lower()
     return any(fam in first for fam in forbidden)
 
+def generate_deterministic_guid(row: pd.Series) -> str:
+    """
+    Создает детерминированный GUID на основе содержимого строки.
+    Это гарантирует, что для одной и той же записи всегда будет один и тот же ID.
+    """
+    # Используем ключевые поля, которые определяют уникальность записи.
+    # Преобразуем дату в строку, чтобы избежать проблем с форматами.
+    closing_date_str = str(row.get('closing_date', ''))
+    
+    key_string = (
+        f"{row.get('Семейство', '')}"
+        f"{closing_date_str}"
+        f"{row.get('Описание изменения', '')}"
+        f"{row.get('Ответственный', '')}" # Добавляем ответственного для большей уникальности
+    )
+    
+    # Генерируем UUIDv5, который основан на SHA-1 хеше имени и неймспейса.
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, key_string))
+
 
 def transform_gsheet_data_df(df_families: pd.DataFrame, **context) -> pd.DataFrame:
     """
@@ -36,12 +55,15 @@ def transform_gsheet_data_df(df_families: pd.DataFrame, **context) -> pd.DataFra
     # Удаление лишних Unnamed-столбцов
     df_families = df_families.loc[:, ~df_families.columns.str.contains('^Unnamed', na=False)]
 
+    print("Генерация детерминированных GUID...")
+    df_families['guid'] = df_families.apply(generate_deterministic_guid, axis=1)
+    print("GUID сгенерированы.")
+
     # Удаление дубликатов и сброс индекса
     df_families.drop_duplicates(inplace=True)
     df_families.reset_index(drop=True, inplace=True)
 
     # Добавление новых столбцов
-    df_families['guid'] = [uuid.uuid4() for _ in range(len(df_families))]
     df_families['title'] = 'BIM_Семейства'
     df_families['created'] = df_families['closing_date'] if 'closing_date' in df_families.columns else pd.NaT
     df_families['short_description'] = df_families['Семейство'] if 'Семейство' in df_families.columns else ''
@@ -64,8 +86,7 @@ def transform_gsheet_data_df(df_families: pd.DataFrame, **context) -> pd.DataFra
         df_families.rename(columns={'Раздел': 'discipline'}, inplace=True)
     elif 'discipline' not in df_families.columns:
         df_families['discipline'] = 'Не указано'
-
-    # Сопоставление групп дисциплин
+        # Сопоставление групп дисциплин
     discipline_mapping = {
         'АР': 'Архитектура', 'ВК': 'Инженерные системы', 'ОВ': 'Инженерные системы',
         'КЖ': 'Конструкции', 'ТХ': 'Инженерные системы', 'ЭЛ': 'Электросети и связь',
@@ -81,12 +102,14 @@ def transform_gsheet_data_df(df_families: pd.DataFrame, **context) -> pd.DataFra
     df_families['status'] = 'Закрыта'
     df_families['comment'] = df_families['Описание изменения'] if 'Описание изменения' in df_families.columns else ''
     df_families['responsible'] = df_families['Ответственный'] if 'Ответственный' in df_families.columns else 'Нет данных'
+
     # Итоговая структура
     columns_order = [
         'title', 'guid', 'created', 'closing_date', 'work_days_duration', 'short_description', 'program',
         'discipline', 'discipline_group', 'priority', 'author', 'type_request', 
         'type_request_group', 'status', 'comment', 'responsible'
     ]
+    
     # Добавляем department и project_section в final_order
     final_order = columns_order + ['department', 'project_section']
     
