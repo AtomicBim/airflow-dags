@@ -63,10 +63,10 @@ def extract_development_stage(postgres_conn_id: str, output_path: str, **context
 
 
 def extract_project_sync(postgres_conn_id: str, output_path: str, **context) -> str:
-    """Экспортирует таблицу plugins.project_sync из pluginsdb."""
+    """Экспортирует таблицу projects.project_sync из pluginsdb."""
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
     conn = hook.get_conn()
-    sql = 'SELECT * FROM plugins.project_sync'
+    sql = 'SELECT * FROM projects.project_sync'
     df = pd.read_sql(sql, conn)
     conn.close()
 
