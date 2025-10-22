@@ -31,43 +31,46 @@ def load_to_postgres(
     
     full_table_name = f'"{schema}"."{table_name}"'
     
-    # Создаем схему
-    hook.run(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
-    
     print(f"Загрузка данных в {schema}.{table_name} (if_exists='{if_exists}')...")
     
-    # Обрабатываем стратегию if_exists
-    if if_exists == "replace":
-        hook.run(f'DROP TABLE IF EXISTS {full_table_name}')
-        print(f"Таблица {full_table_name} удалена")
-    elif if_exists == "fail":
-        # Проверяем существование таблицы
-        check_sql = f"""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = '{schema}' 
-                AND table_name = '{table_name}'
-            )
-        """
-        exists = hook.get_first(check_sql)[0]
-        if exists:
-            raise ValueError(f"Таблица {full_table_name} уже существует")
-    
-    # Создаем таблицу если её нет (автоматически определяем типы из DataFrame)
-    create_table_sql = _generate_create_table_sql(df, table_name, schema)
-    hook.run(create_table_sql)
-    
-    # Используем COPY для быстрой загрузки данных
-    # Конвертируем DataFrame в CSV формат
-    buffer = StringIO()
-    df.to_csv(buffer, index=False, header=False, sep='\t', na_rep='\\N')
-    buffer.seek(0)
-    
-    # Загружаем через COPY (самый быстрый способ для PostgreSQL)
+    # Используем одно соединение для всех операций
     conn = hook.get_conn()
     cursor = conn.cursor()
     
     try:
+        # Создаем схему
+        cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+        
+        # Обрабатываем стратегию if_exists
+        if if_exists == "replace":
+            cursor.execute(f'DROP TABLE IF EXISTS {full_table_name}')
+            print(f"Таблица {full_table_name} удалена")
+        elif if_exists == "fail":
+            # Проверяем существование таблицы
+            cursor.execute(f"""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = '{schema}' 
+                    AND table_name = '{table_name}'
+                )
+            """)
+            exists = cursor.fetchone()[0]
+            if exists:
+                raise ValueError(f"Таблица {full_table_name} уже существует")
+        
+        # Создаем таблицу если её нет
+        create_table_sql = _generate_create_table_sql(df, table_name, schema)
+        cursor.execute(create_table_sql)
+        
+        # Коммитим создание таблицы
+        conn.commit()
+        
+        # Используем COPY для быстрой загрузки данных
+        buffer = StringIO()
+        df.to_csv(buffer, index=False, header=False, sep='\t', na_rep='\\N')
+        buffer.seek(0)
+        
+        # Загружаем данные
         cursor.copy_from(
             buffer,
             full_table_name,
@@ -76,6 +79,7 @@ def load_to_postgres(
             columns=list(df.columns)
         )
         conn.commit()
+        
         print(f"Загружено {len(df)} строк в {schema}.{table_name}")
         return len(df)
     except Exception as e:
@@ -144,38 +148,42 @@ def load_incremental_to_postgres(
     
     full_table_name = f'"{schema}"."{table_name}"'
     
-    # Создаем схему
-    hook.run(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
-    
-    # Создаем таблицу если её нет
-    create_table_sql = _generate_create_table_sql(df, table_name, schema)
-    hook.run(create_table_sql)
-    
-    # Получаем уникальные даты из DataFrame
-    if date_column in df.columns:
-        df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
-        unique_dates = df[date_column].dropna().dt.date.unique()
-
-        # Удаляем старые записи за эти даты
-        if len(unique_dates) > 0:
-            dates_str = ", ".join([f"'{d}'" for d in unique_dates])
-            delete_sql = f"""
-                DELETE FROM {full_table_name}
-                WHERE DATE("{date_column}") IN ({dates_str})
-            """
-            print(f"Удаление старых данных за даты: {dates_str}")
-            hook.run(delete_sql)
-    
-    # Используем COPY для быстрой загрузки данных
-    buffer = StringIO()
-    df.to_csv(buffer, index=False, header=False, sep='\t', na_rep='\\N')
-    buffer.seek(0)
-    
-    # Загружаем через COPY
+    # Используем одно соединение для всех операций
     conn = hook.get_conn()
     cursor = conn.cursor()
     
     try:
+        # Создаем схему
+        cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+        
+        # Создаем таблицу если её нет
+        create_table_sql = _generate_create_table_sql(df, table_name, schema)
+        cursor.execute(create_table_sql)
+        
+        # Получаем уникальные даты из DataFrame
+        if date_column in df.columns:
+            df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
+            unique_dates = df[date_column].dropna().dt.date.unique()
+
+            # Удаляем старые записи за эти даты
+            if len(unique_dates) > 0:
+                dates_str = ", ".join([f"'{d}'" for d in unique_dates])
+                delete_sql = f"""
+                    DELETE FROM {full_table_name}
+                    WHERE DATE("{date_column}") IN ({dates_str})
+                """
+                print(f"Удаление старых данных за даты: {dates_str}")
+                cursor.execute(delete_sql)
+        
+        # Коммитим изменения схемы и удаление
+        conn.commit()
+        
+        # Используем COPY для быстрой загрузки данных
+        buffer = StringIO()
+        df.to_csv(buffer, index=False, header=False, sep='\t', na_rep='\\N')
+        buffer.seek(0)
+        
+        # Загружаем данные
         cursor.copy_from(
             buffer,
             full_table_name,
@@ -184,6 +192,7 @@ def load_incremental_to_postgres(
             columns=list(df.columns)
         )
         conn.commit()
+        
         print(f"Инкрементально загружено {len(df)} строк в {schema}.{table_name}")
         return len(df)
     except Exception as e:
