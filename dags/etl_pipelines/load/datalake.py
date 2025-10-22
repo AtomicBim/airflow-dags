@@ -2,7 +2,7 @@
 Load модуль для записи данных в PostgreSQL datalake схему.
 """
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 
@@ -28,47 +28,23 @@ def load_to_postgres(
         Количество загруженных строк
     """
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
-    
-    # Получаем URI соединения и создаём настоящий SQLAlchemy engine
-    conn_uri = hook.get_uri()
-    engine = create_engine(conn_uri)
+
+    # Строим SQLAlchemy engine напрямую из хука Airflow (корректный драйвер/URI)
+    engine = hook.get_sqlalchemy_engine()
 
     try:
-        # Используем соединение через контекстный менеджер
-        with engine.connect() as conn:
-            # Пересоздание структуры таблицы
-            if if_exists == "replace":
-                print(f"Пересоздание структуры таблицы {schema}.{table_name}...")
-                df.head(0).to_sql(
-                    table_name,
-                    conn,
-                    schema=schema,
-                    if_exists="replace",
-                    index=False
-                )
-                print(f"Структура таблицы {schema}.{table_name} пересоздана.")
+        # Гарантируем наличие схемы
+        with engine.begin() as conn:
+            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
 
-                # Загрузка данных
-                print(f"Загрузка данных в {schema}.{table_name}...")
-                df.to_sql(
-                    table_name,
-                    conn,
-                    schema=schema,
-                    if_exists="append",
-                    index=False
-                )
-            else:
-                df.to_sql(
-                    table_name,
-                    conn,
-                    schema=schema,
-                    if_exists=if_exists,
-                    index=False
-                )
-            
-            # Коммит изменений
-            conn.commit()
-
+        print(f"Загрузка данных в {schema}.{table_name} (if_exists='{if_exists}')...")
+        df.to_sql(
+            table_name,
+            engine,  # Передаём Engine, чтобы pandas использовал SQLAlchemy-режим
+            schema=schema,
+            if_exists=if_exists,
+            index=False
+        )
         print(f"Загружено {len(df)} строк в {schema}.{table_name}")
         return len(df)
     finally:
@@ -99,13 +75,14 @@ def load_incremental_to_postgres(
     """
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
     
-    # Получаем URI соединения и создаём настоящий SQLAlchemy engine
-    conn_uri = hook.get_uri()
-    engine = create_engine(conn_uri)
+    # Строим SQLAlchemy engine напрямую из хука Airflow
+    engine = hook.get_sqlalchemy_engine()
 
     try:
-        # Используем соединение через контекстный менеджер
-        with engine.connect() as conn:
+        # Открываем транзакцию; коммит произойдёт автоматически при выходе
+        with engine.begin() as conn:
+            # Гарантируем наличие схемы
+            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
             # Получаем уникальные даты из DataFrame
             if date_column in df.columns:
                 df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
@@ -120,7 +97,7 @@ def load_incremental_to_postgres(
                     """
                     print(f"Удаление старых данных за даты: {dates_str}")
                     conn.execute(text(delete_sql))
-                    conn.commit()
+                    # транзакция продолжается
 
             # Загрузка новых данных
             df.to_sql(
@@ -130,9 +107,6 @@ def load_incremental_to_postgres(
                 if_exists="append",
                 index=False
             )
-            
-            # Коммит изменений
-            conn.commit()
 
         print(f"Инкрементально загружено {len(df)} строк в {schema}.{table_name}")
         return len(df)
