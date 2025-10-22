@@ -3,7 +3,7 @@
 Скрипт для подготовки JSON credentials для сохранения в Airflow Variable.
 Использование:
 1. Сохраните этот скрипт как prepare_credentials.py
-2. Запустите: python prepare_credentials.py /path/to/revitmaterials-d96ae3c7a1d1.json
+2. Запустите: python prepare_credentials.py config/revitmaterials-db15db824f22.json
 3. Скопируйте вывод и вставьте в Airflow Variable
 """
 

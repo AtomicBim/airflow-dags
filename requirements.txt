@@ -1,5 +1,6 @@
 apache-airflow-providers-postgres
 apache-airflow-providers-http
+apache-airflow-providers-mysql
 pandas
 requests_ntlm
 SQLAlchemy
@@ -7,3 +8,10 @@ beautifulsoup4
 workalendar
 gspread
 google-auth-oauthlib
+python-gitlab
+GitPython
+psycopg2-binary
+pymysql
+requests
+urllib3
+tqdm
