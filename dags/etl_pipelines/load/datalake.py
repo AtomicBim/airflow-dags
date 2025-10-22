@@ -66,23 +66,19 @@ def load_to_postgres(
         conn.commit()  # Коммитим создание таблицы
         print(f"Таблица {full_table_name} создана")
         
-        # Используем COPY для быстрой загрузки данных
+        # Используем COPY для быстрой загрузки данных (проверенный метод из SharePoint ETL)
         buffer = StringIO()
-        df.to_csv(buffer, index=False, header=False, sep='\t', na_rep='\\N')
+        df.to_csv(buffer, index=False, header=False)  # Обычный CSV формат
         buffer.seek(0)
         
-        # Загружаем данные через COPY EXPERT (более надежный метод)
-        # Формируем список колонок с кавычками для колонок с точками в названии
+        # Загружаем данные через COPY EXPERT
         columns_list = ', '.join([f'"{col}"' for col in df.columns])
-        copy_sql = f"""
-            COPY {full_table_name} ({columns_list})
-            FROM STDIN
-            WITH (FORMAT csv, DELIMITER E'\\t', NULL '\\N')
-        """
+        copy_sql = f"COPY {full_table_name} ({columns_list}) FROM STDIN WITH (FORMAT CSV)"
+        print(f"Загрузка {len(df)} строк в {full_table_name}...")
         cursor.copy_expert(copy_sql, buffer)
         conn.commit()
         
-        print(f"Загружено {len(df)} строк в {schema}.{table_name}")
+        print(f"Успешно загружено {len(df)} строк в {schema}.{table_name}")
         return len(df)
     except Exception as e:
         conn.rollback()
@@ -180,19 +176,15 @@ def load_incremental_to_postgres(
                 cursor.execute(delete_sql)
                 conn.commit()  # Коммитим удаление
         
-        # Используем COPY для быстрой загрузки данных
+        # Используем COPY для быстрой загрузки данных (проверенный метод из SharePoint ETL)
         buffer = StringIO()
-        df.to_csv(buffer, index=False, header=False, sep='\t', na_rep='\\N')
+        df.to_csv(buffer, index=False, header=False)  # Обычный CSV формат
         buffer.seek(0)
         
-        # Загружаем данные через COPY EXPERT (более надежный метод)
-        # Формируем список колонок с кавычками для колонок с точками в названии
+        # Загружаем данные через COPY EXPERT
         columns_list = ', '.join([f'"{col}"' for col in df.columns])
-        copy_sql = f"""
-            COPY {full_table_name} ({columns_list})
-            FROM STDIN
-            WITH (FORMAT csv, DELIMITER E'\\t', NULL '\\N')
-        """
+        copy_sql = f"COPY {full_table_name} ({columns_list}) FROM STDIN WITH (FORMAT CSV)"
+        print(f"Загрузка {len(df)} строк в {full_table_name}...")
         cursor.copy_expert(copy_sql, buffer)
         conn.commit()
         
