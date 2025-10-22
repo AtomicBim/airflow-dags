@@ -49,9 +49,6 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
 )
 def scripts_etl():
 
-    # Получаем connections
-    gitlab_conn = BaseHook.get_connection("gitlab_api")
-
     # === Extract tasks (параллельно) ===
 
     @task
@@ -93,6 +90,9 @@ def scripts_etl():
     @task
     def extract_gitlab_loc() -> str:
         """Извлекает статистику LOC из GitLab проектов."""
+        # Получаем connection внутри task
+        gitlab_conn = BaseHook.get_connection("gitlab_api")
+
         output_path = str(DATA_ROOT / "gitlab_export_lines.json")
         return extract_gitlab.extract_gitlab_lines(
             gitlab_url=gitlab_conn.host,

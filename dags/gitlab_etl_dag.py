@@ -46,13 +46,12 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
 )
 def gitlab_etl():
 
-    # Получаем connections
-    gitlab_conn = BaseHook.get_connection("gitlab_api")
-    gsheet_config = Variable.get("gsheet_config", deserialize_json=True)
-
     @task
     def extract_gitlab_loc() -> str:
         """Извлекает статистику LOC из GitLab проектов."""
+        # Получаем connection внутри task
+        gitlab_conn = BaseHook.get_connection("gitlab_api")
+
         output_path = str(DATA_ROOT / "gitlab_export_lines.json")
         return extract_gitlab.extract_gitlab_lines(
             gitlab_url=gitlab_conn.host,
@@ -73,6 +72,9 @@ def gitlab_etl():
     @task
     def extract_gitlab_mapping() -> str:
         """Извлекает маппинг gitlab-plugins из Google Sheets."""
+        # Получаем variable внутри task
+        gsheet_config = Variable.get("gsheet_config", deserialize_json=True)
+
         output_path = str(DATA_ROOT / "gitlab-plugins_mapping.csv")
         return gsheet.extract_gitlab_mapping(
             service_account_path=gsheet_config["service_account_path"],
@@ -114,6 +116,8 @@ def gitlab_etl():
             print("Нет новых GitLab проектов для маппинга")
             return 0
 
+        # Получаем variable внутри task
+        gsheet_config = Variable.get("gsheet_config", deserialize_json=True)
         df_new_mappings = pd.read_csv(paths["new_mappings_path"])
 
         return gsheet.append_new_gitlab_mappings(
