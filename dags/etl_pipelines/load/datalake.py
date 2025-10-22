@@ -33,19 +33,21 @@ def load_to_postgres(
     engine = hook.get_sqlalchemy_engine()
 
     try:
-        # Гарантируем наличие схемы
+        # Используем connection context manager для корректной работы с pandas
         with engine.begin() as conn:
+            # Гарантируем наличие схемы
             conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
 
-        print(f"Загрузка данных в {schema}.{table_name} (if_exists='{if_exists}')...")
-        df.to_sql(
-            table_name,
-            engine,  # Передаём Engine, чтобы pandas использовал SQLAlchemy-режим
-            schema=schema,
-            if_exists=if_exists,
-            index=False
-        )
-        print(f"Загружено {len(df)} строк в {schema}.{table_name}")
+            print(f"Загрузка данных в {schema}.{table_name} (if_exists='{if_exists}')...")
+            df.to_sql(
+                table_name,
+                conn,  # Передаём connection object, а не engine
+                schema=schema,
+                if_exists=if_exists,
+                index=False
+            )
+            print(f"Загружено {len(df)} строк в {schema}.{table_name}")
+        
         return len(df)
     finally:
         engine.dispose()
