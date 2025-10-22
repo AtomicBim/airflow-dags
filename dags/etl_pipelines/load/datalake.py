@@ -72,9 +72,11 @@ def load_to_postgres(
         buffer.seek(0)
         
         # Загружаем данные
+        # copy_from требует формат без кавычек: schema.table
+        copy_table_name = f'{schema}.{table_name}'
         cursor.copy_from(
             buffer,
-            full_table_name,
+            copy_table_name,
             sep='\t',
             null='\\N',
             columns=list(df.columns)
@@ -185,9 +187,11 @@ def load_incremental_to_postgres(
         buffer.seek(0)
         
         # Загружаем данные
+        # copy_from требует формат без кавычек: schema.table
+        copy_table_name = f'{schema}.{table_name}'
         cursor.copy_from(
             buffer,
-            full_table_name,
+            copy_table_name,
             sep='\t',
             null='\\N',
             columns=list(df.columns)
