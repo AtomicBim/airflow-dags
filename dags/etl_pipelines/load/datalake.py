@@ -28,40 +28,51 @@ def load_to_postgres(
         Количество загруженных строк
     """
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
-    engine = hook.get_sqlalchemy_engine()
+    
+    # Получаем URI соединения и создаём настоящий SQLAlchemy engine
+    conn_uri = hook.get_uri()
+    engine = create_engine(conn_uri)
 
-    # Пересоздание структуры таблицы
-    if if_exists == "replace":
-        print(f"Пересоздание структуры таблицы {schema}.{table_name}...")
-        df.head(0).to_sql(
-            table_name,
-            engine,
-            schema=schema,
-            if_exists="replace",
-            index=False
-        )
-        print(f"Структура таблицы {schema}.{table_name} пересоздана.")
+    try:
+        # Используем соединение через контекстный менеджер
+        with engine.connect() as conn:
+            # Пересоздание структуры таблицы
+            if if_exists == "replace":
+                print(f"Пересоздание структуры таблицы {schema}.{table_name}...")
+                df.head(0).to_sql(
+                    table_name,
+                    conn,
+                    schema=schema,
+                    if_exists="replace",
+                    index=False
+                )
+                print(f"Структура таблицы {schema}.{table_name} пересоздана.")
 
-        # Загрузка данных
-        print(f"Загрузка данных в {schema}.{table_name}...")
-        df.to_sql(
-            table_name,
-            engine,
-            schema=schema,
-            if_exists="append",
-            index=False
-        )
-    else:
-        df.to_sql(
-            table_name,
-            engine,
-            schema=schema,
-            if_exists=if_exists,
-            index=False
-        )
+                # Загрузка данных
+                print(f"Загрузка данных в {schema}.{table_name}...")
+                df.to_sql(
+                    table_name,
+                    conn,
+                    schema=schema,
+                    if_exists="append",
+                    index=False
+                )
+            else:
+                df.to_sql(
+                    table_name,
+                    conn,
+                    schema=schema,
+                    if_exists=if_exists,
+                    index=False
+                )
+            
+            # Коммит изменений
+            conn.commit()
 
-    print(f"Загружено {len(df)} строк в {schema}.{table_name}")
-    return len(df)
+        print(f"Загружено {len(df)} строк в {schema}.{table_name}")
+        return len(df)
+    finally:
+        engine.dispose()
 
 
 def load_incremental_to_postgres(
@@ -87,32 +98,43 @@ def load_incremental_to_postgres(
         Количество загруженных строк
     """
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
-    engine = hook.get_sqlalchemy_engine()
+    
+    # Получаем URI соединения и создаём настоящий SQLAlchemy engine
+    conn_uri = hook.get_uri()
+    engine = create_engine(conn_uri)
 
-    # Получаем уникальные даты из DataFrame
-    if date_column in df.columns:
-        df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
-        unique_dates = df[date_column].dropna().dt.date.unique()
+    try:
+        # Используем соединение через контекстный менеджер
+        with engine.connect() as conn:
+            # Получаем уникальные даты из DataFrame
+            if date_column in df.columns:
+                df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
+                unique_dates = df[date_column].dropna().dt.date.unique()
 
-        # Удаляем старые записи за эти даты
-        if len(unique_dates) > 0:
-            dates_str = ", ".join([f"'{d}'" for d in unique_dates])
-            delete_sql = f"""
-                DELETE FROM {schema}.{table_name}
-                WHERE DATE({date_column}) IN ({dates_str})
-            """
-            print(f"Удаление старых данных за даты: {dates_str}")
-            with engine.begin() as conn:
-                conn.execute(text(delete_sql))
+                # Удаляем старые записи за эти даты
+                if len(unique_dates) > 0:
+                    dates_str = ", ".join([f"'{d}'" for d in unique_dates])
+                    delete_sql = f"""
+                        DELETE FROM {schema}.{table_name}
+                        WHERE DATE({date_column}) IN ({dates_str})
+                    """
+                    print(f"Удаление старых данных за даты: {dates_str}")
+                    conn.execute(text(delete_sql))
+                    conn.commit()
 
-    # Загрузка новых данных
-    df.to_sql(
-        table_name,
-        engine,
-        schema=schema,
-        if_exists="append",
-        index=False
-    )
+            # Загрузка новых данных
+            df.to_sql(
+                table_name,
+                conn,
+                schema=schema,
+                if_exists="append",
+                index=False
+            )
+            
+            # Коммит изменений
+            conn.commit()
 
-    print(f"Инкрементально загружено {len(df)} строк в {schema}.{table_name}")
-    return len(df)
+        print(f"Инкрементально загружено {len(df)} строк в {schema}.{table_name}")
+        return len(df)
+    finally:
+        engine.dispose()
