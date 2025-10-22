@@ -16,6 +16,7 @@ from etl_pipelines.extract import pluginsdb
 from etl_pipelines.transform import projectsync as transform_projectsync
 from etl_pipelines.load import datalake
 
+# Коммент проверочный
 
 # Переменные Airflow
 DATA_ROOT = Path(Variable.get("ETL_DATA_ROOT_PATH", default_var="/tmp/data")) / "projectsync"
