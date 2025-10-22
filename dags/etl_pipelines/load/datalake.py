@@ -2,7 +2,7 @@
 Load модуль для записи данных в PostgreSQL datalake схему.
 """
 import pandas as pd
-from sqlalchemy import text
+from io import StringIO
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 
@@ -15,7 +15,7 @@ def load_to_postgres(
     **context
 ) -> int:
     """
-    Загружает DataFrame в PostgreSQL таблицу.
+    Загружает DataFrame в PostgreSQL таблицу используя нативные методы Airflow.
 
     Args:
         df: DataFrame для загрузки
@@ -28,33 +28,94 @@ def load_to_postgres(
         Количество загруженных строк
     """
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
-
-    # Получаем URI строку для подключения к PostgreSQL
-    engine = hook.get_sqlalchemy_engine()
-
-    try:
-        # Гарантируем наличие схемы
-        with engine.begin() as conn:
-            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
-
-        print(f"Загрузка данных в {schema}.{table_name} (if_exists='{if_exists}')...")
-        
-        # Используем connection вместо engine для совместимости с pandas
-        with engine.connect() as conn:
-            df.to_sql(
-                table_name,
-                conn,
-                schema=schema,
-                if_exists=if_exists,
-                index=False,
-                method='multi'  # Оптимизация для массовой вставки
+    
+    full_table_name = f'"{schema}"."{table_name}"'
+    
+    # Создаем схему
+    hook.run(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+    
+    print(f"Загрузка данных в {schema}.{table_name} (if_exists='{if_exists}')...")
+    
+    # Обрабатываем стратегию if_exists
+    if if_exists == "replace":
+        hook.run(f'DROP TABLE IF EXISTS {full_table_name}')
+        print(f"Таблица {full_table_name} удалена")
+    elif if_exists == "fail":
+        # Проверяем существование таблицы
+        check_sql = f"""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = '{schema}' 
+                AND table_name = '{table_name}'
             )
-            conn.commit()
-        
+        """
+        exists = hook.get_first(check_sql)[0]
+        if exists:
+            raise ValueError(f"Таблица {full_table_name} уже существует")
+    
+    # Создаем таблицу если её нет (автоматически определяем типы из DataFrame)
+    create_table_sql = _generate_create_table_sql(df, table_name, schema)
+    hook.run(create_table_sql)
+    
+    # Используем COPY для быстрой загрузки данных
+    # Конвертируем DataFrame в CSV формат
+    buffer = StringIO()
+    df.to_csv(buffer, index=False, header=False, sep='\t', na_rep='\\N')
+    buffer.seek(0)
+    
+    # Загружаем через COPY (самый быстрый способ для PostgreSQL)
+    conn = hook.get_conn()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.copy_from(
+            buffer,
+            full_table_name,
+            sep='\t',
+            null='\\N',
+            columns=list(df.columns)
+        )
+        conn.commit()
         print(f"Загружено {len(df)} строк в {schema}.{table_name}")
         return len(df)
+    except Exception as e:
+        conn.rollback()
+        raise e
     finally:
-        engine.dispose()
+        cursor.close()
+        conn.close()
+
+
+def _generate_create_table_sql(df: pd.DataFrame, table_name: str, schema: str) -> str:
+    """Генерирует SQL для создания таблицы на основе типов DataFrame."""
+    
+    # Маппинг типов pandas -> PostgreSQL
+    type_mapping = {
+        'int64': 'BIGINT',
+        'int32': 'INTEGER',
+        'int16': 'SMALLINT',
+        'float64': 'DOUBLE PRECISION',
+        'float32': 'REAL',
+        'object': 'TEXT',
+        'bool': 'BOOLEAN',
+        'datetime64[ns]': 'TIMESTAMP',
+        'datetime64[ns, UTC]': 'TIMESTAMP WITH TIME ZONE',
+    }
+    
+    columns_sql = []
+    for col_name, dtype in df.dtypes.items():
+        pg_type = type_mapping.get(str(dtype), 'TEXT')
+        columns_sql.append(f'"{col_name}" {pg_type}')
+    
+    columns_str = ',\n    '.join(columns_sql)
+    
+    sql = f"""
+    CREATE TABLE IF NOT EXISTS "{schema}"."{table_name}" (
+        {columns_str}
+    )
+    """
+    
+    return sql
 
 
 def load_incremental_to_postgres(
@@ -81,43 +142,53 @@ def load_incremental_to_postgres(
     """
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
     
-    # Строим SQLAlchemy engine напрямую из хука Airflow
-    engine = hook.get_sqlalchemy_engine()
+    full_table_name = f'"{schema}"."{table_name}"'
+    
+    # Создаем схему
+    hook.run(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+    
+    # Создаем таблицу если её нет
+    create_table_sql = _generate_create_table_sql(df, table_name, schema)
+    hook.run(create_table_sql)
+    
+    # Получаем уникальные даты из DataFrame
+    if date_column in df.columns:
+        df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
+        unique_dates = df[date_column].dropna().dt.date.unique()
 
+        # Удаляем старые записи за эти даты
+        if len(unique_dates) > 0:
+            dates_str = ", ".join([f"'{d}'" for d in unique_dates])
+            delete_sql = f"""
+                DELETE FROM {full_table_name}
+                WHERE DATE("{date_column}") IN ({dates_str})
+            """
+            print(f"Удаление старых данных за даты: {dates_str}")
+            hook.run(delete_sql)
+    
+    # Используем COPY для быстрой загрузки данных
+    buffer = StringIO()
+    df.to_csv(buffer, index=False, header=False, sep='\t', na_rep='\\N')
+    buffer.seek(0)
+    
+    # Загружаем через COPY
+    conn = hook.get_conn()
+    cursor = conn.cursor()
+    
     try:
-        # Открываем транзакцию для подготовки данных и загрузки
-        with engine.connect() as conn:
-            # Начинаем транзакцию
-            with conn.begin():
-                # Гарантируем наличие схемы
-                conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
-                
-                # Получаем уникальные даты из DataFrame
-                if date_column in df.columns:
-                    df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
-                    unique_dates = df[date_column].dropna().dt.date.unique()
-
-                    # Удаляем старые записи за эти даты
-                    if len(unique_dates) > 0:
-                        dates_str = ", ".join([f"'{d}'" for d in unique_dates])
-                        delete_sql = f"""
-                            DELETE FROM {schema}.{table_name}
-                            WHERE DATE({date_column}) IN ({dates_str})
-                        """
-                        print(f"Удаление старых данных за даты: {dates_str}")
-                        conn.execute(text(delete_sql))
-
-                # Загрузка новых данных в той же транзакции
-                df.to_sql(
-                    table_name,
-                    conn,
-                    schema=schema,
-                    if_exists="append",
-                    index=False,
-                    method='multi'  # Оптимизация для массовой вставки
-                )
-
+        cursor.copy_from(
+            buffer,
+            full_table_name,
+            sep='\t',
+            null='\\N',
+            columns=list(df.columns)
+        )
+        conn.commit()
         print(f"Инкрементально загружено {len(df)} строк в {schema}.{table_name}")
         return len(df)
+    except Exception as e:
+        conn.rollback()
+        raise e
     finally:
-        engine.dispose()
+        cursor.close()
+        conn.close()
