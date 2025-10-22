@@ -29,26 +29,29 @@ def load_to_postgres(
     """
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
 
-    # Строим SQLAlchemy engine напрямую из хука Airflow (корректный драйвер/URI)
+    # Получаем URI строку для подключения к PostgreSQL
     engine = hook.get_sqlalchemy_engine()
 
     try:
-        # Гарантируем наличие схемы (в отдельной транзакции)
+        # Гарантируем наличие схемы
         with engine.begin() as conn:
             conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
 
         print(f"Загрузка данных в {schema}.{table_name} (if_exists='{if_exists}')...")
-        # Pandas требует engine напрямую для корректной работы to_sql
-        df.to_sql(
-            table_name,
-            engine,
-            schema=schema,
-            if_exists=if_exists,
-            index=False,
-            method='multi'  # Оптимизация для массовой вставки
-        )
-        print(f"Загружено {len(df)} строк в {schema}.{table_name}")
         
+        # Используем connection вместо engine для совместимости с pandas
+        with engine.connect() as conn:
+            df.to_sql(
+                table_name,
+                conn,
+                schema=schema,
+                if_exists=if_exists,
+                index=False,
+                method='multi'  # Оптимизация для массовой вставки
+            )
+            conn.commit()
+        
+        print(f"Загружено {len(df)} строк в {schema}.{table_name}")
         return len(df)
     finally:
         engine.dispose()
@@ -82,35 +85,37 @@ def load_incremental_to_postgres(
     engine = hook.get_sqlalchemy_engine()
 
     try:
-        # Открываем транзакцию для подготовки данных
-        with engine.begin() as conn:
-            # Гарантируем наличие схемы
-            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
-            
-            # Получаем уникальные даты из DataFrame
-            if date_column in df.columns:
-                df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
-                unique_dates = df[date_column].dropna().dt.date.unique()
+        # Открываем транзакцию для подготовки данных и загрузки
+        with engine.connect() as conn:
+            # Начинаем транзакцию
+            with conn.begin():
+                # Гарантируем наличие схемы
+                conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+                
+                # Получаем уникальные даты из DataFrame
+                if date_column in df.columns:
+                    df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
+                    unique_dates = df[date_column].dropna().dt.date.unique()
 
-                # Удаляем старые записи за эти даты
-                if len(unique_dates) > 0:
-                    dates_str = ", ".join([f"'{d}'" for d in unique_dates])
-                    delete_sql = f"""
-                        DELETE FROM {schema}.{table_name}
-                        WHERE DATE({date_column}) IN ({dates_str})
-                    """
-                    print(f"Удаление старых данных за даты: {dates_str}")
-                    conn.execute(text(delete_sql))
+                    # Удаляем старые записи за эти даты
+                    if len(unique_dates) > 0:
+                        dates_str = ", ".join([f"'{d}'" for d in unique_dates])
+                        delete_sql = f"""
+                            DELETE FROM {schema}.{table_name}
+                            WHERE DATE({date_column}) IN ({dates_str})
+                        """
+                        print(f"Удаление старых данных за даты: {dates_str}")
+                        conn.execute(text(delete_sql))
 
-        # Загрузка новых данных (отдельная транзакция через engine)
-        df.to_sql(
-            table_name,
-            engine,
-            schema=schema,
-            if_exists="append",
-            index=False,
-            method='multi'  # Оптимизация для массовой вставки
-        )
+                # Загрузка новых данных в той же транзакции
+                df.to_sql(
+                    table_name,
+                    conn,
+                    schema=schema,
+                    if_exists="append",
+                    index=False,
+                    method='multi'  # Оптимизация для массовой вставки
+                )
 
         print(f"Инкрементально загружено {len(df)} строк в {schema}.{table_name}")
         return len(df)
