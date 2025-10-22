@@ -71,16 +71,15 @@ def load_to_postgres(
         df.to_csv(buffer, index=False, header=False, sep='\t', na_rep='\\N')
         buffer.seek(0)
         
-        # Загружаем данные
-        # copy_from требует формат без кавычек: schema.table
-        copy_table_name = f'{schema}.{table_name}'
-        cursor.copy_from(
-            buffer,
-            copy_table_name,
-            sep='\t',
-            null='\\N',
-            columns=list(df.columns)
-        )
+        # Загружаем данные через COPY EXPERT (более надежный метод)
+        # Формируем список колонок с кавычками для колонок с точками в названии
+        columns_list = ', '.join([f'"{col}"' for col in df.columns])
+        copy_sql = f"""
+            COPY {full_table_name} ({columns_list})
+            FROM STDIN
+            WITH (FORMAT csv, DELIMITER E'\\t', NULL '\\N')
+        """
+        cursor.copy_expert(copy_sql, buffer)
         conn.commit()
         
         print(f"Загружено {len(df)} строк в {schema}.{table_name}")
@@ -186,16 +185,15 @@ def load_incremental_to_postgres(
         df.to_csv(buffer, index=False, header=False, sep='\t', na_rep='\\N')
         buffer.seek(0)
         
-        # Загружаем данные
-        # copy_from требует формат без кавычек: schema.table
-        copy_table_name = f'{schema}.{table_name}'
-        cursor.copy_from(
-            buffer,
-            copy_table_name,
-            sep='\t',
-            null='\\N',
-            columns=list(df.columns)
-        )
+        # Загружаем данные через COPY EXPERT (более надежный метод)
+        # Формируем список колонок с кавычками для колонок с точками в названии
+        columns_list = ', '.join([f'"{col}"' for col in df.columns])
+        copy_sql = f"""
+            COPY {full_table_name} ({columns_list})
+            FROM STDIN
+            WITH (FORMAT csv, DELIMITER E'\\t', NULL '\\N')
+        """
+        cursor.copy_expert(copy_sql, buffer)
         conn.commit()
         
         print(f"Инкрементально загружено {len(df)} строк в {schema}.{table_name}")
