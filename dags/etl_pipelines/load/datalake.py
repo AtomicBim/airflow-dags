@@ -40,10 +40,12 @@ def load_to_postgres(
     try:
         # Создаем схему
         cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+        conn.commit()
         
         # Обрабатываем стратегию if_exists
         if if_exists == "replace":
             cursor.execute(f'DROP TABLE IF EXISTS {full_table_name}')
+            conn.commit()  # Коммитим удаление
             print(f"Таблица {full_table_name} удалена")
         elif if_exists == "fail":
             # Проверяем существование таблицы
@@ -58,12 +60,11 @@ def load_to_postgres(
             if exists:
                 raise ValueError(f"Таблица {full_table_name} уже существует")
         
-        # Создаем таблицу если её нет
+        # Создаем таблицу
         create_table_sql = _generate_create_table_sql(df, table_name, schema)
         cursor.execute(create_table_sql)
-        
-        # Коммитим создание таблицы
-        conn.commit()
+        conn.commit()  # Коммитим создание таблицы
+        print(f"Таблица {full_table_name} создана")
         
         # Используем COPY для быстрой загрузки данных
         buffer = StringIO()
@@ -155,10 +156,12 @@ def load_incremental_to_postgres(
     try:
         # Создаем схему
         cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+        conn.commit()
         
         # Создаем таблицу если её нет
         create_table_sql = _generate_create_table_sql(df, table_name, schema)
         cursor.execute(create_table_sql)
+        conn.commit()
         
         # Получаем уникальные даты из DataFrame
         if date_column in df.columns:
@@ -174,9 +177,7 @@ def load_incremental_to_postgres(
                 """
                 print(f"Удаление старых данных за даты: {dates_str}")
                 cursor.execute(delete_sql)
-        
-        # Коммитим изменения схемы и удаление
-        conn.commit()
+                conn.commit()  # Коммитим удаление
         
         # Используем COPY для быстрой загрузки данных
         buffer = StringIO()
