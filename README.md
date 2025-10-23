@@ -2,6 +2,9 @@
 
 Комплексный ETL проект на Apache Airflow для аналитики плагинов, синхронизации данных и интеграций.
 
+**Последнее обновление:** 2025-10-23
+**Версия:** 1.1 (после рефакторинга)
+
 ---
 
 ## 🚀 Быстрый старт
@@ -11,6 +14,7 @@
 1. **[DEPLOYMENT.md](DEPLOYMENT.md)** - Полная пошаговая инструкция по запуску на виртуалке
 2. **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Быстрая справка: таблица всех Connections и Variables
 3. **[PROJECT_ANALYSIS.md](PROJECT_ANALYSIS.md)** - Анализ проекта на связность и исполняемость
+4. **[REFACTORING_REPORT.md](REFACTORING_REPORT.md)** - Отчет по рефакторингу кода
 
 ### Дополнительная документация:
 
@@ -37,7 +41,10 @@
 ```
 airflow-dags/
 ├── dags/
-│   ├── scripts_etl_dag.py          # Основной pipeline
+│   ├── config.py                   # 🆕 Централизованная конфигурация
+│   ├── utils.py                    # 🆕 Общие утилиты для ETL
+│   │
+│   ├── scripts_etl_dag.py          # ⭐ Основной pipeline
 │   ├── gitlab_etl_dag.py           # GitLab LOC analytics
 │   ├── projectsync_etl_dag.py      # Project sync analytics
 │   ├── logs_etl_dag.py             # Logs analytics
@@ -45,14 +52,27 @@ airflow-dags/
 │   ├── gsheet_families_etl_dag.py  # Google Sheets families
 │   │
 │   ├── etl_pipelines/              # Модули ETL (скрипты)
-│   │   ├── extract/                # Extractors: PostgreSQL, GitLab, Google Sheets
-│   │   ├── transform/              # Transformers: scripts, gitlab, projectsync, logs
-│   │   └── load/                   # Loader: PostgreSQL datalake
+│   │   ├── extract/                # Extractors: PostgreSQL, GitLab
+│   │   │   ├── pluginsdb.py       # PostgreSQL extractors (6 функций)
+│   │   │   └── gitlab.py          # GitLab LOC extraction
+│   │   ├── transform/              # Transformers
+│   │   │   ├── scripts.py         # Scripts analytics
+│   │   │   ├── gitlab.py          # GitLab analytics
+│   │   │   ├── projectsync.py     # Project sync analytics
+│   │   │   └── logs.py            # Logs analytics
+│   │   └── load/                   # Loader
+│   │       └── datalake.py        # PostgreSQL datalake loader
 │   │
 │   └── coord_sharepoint_etl/       # Модули ETL (SharePoint & GSheets)
 │       ├── extract/
+│       │   ├── sharepoint.py      # SharePoint REST API
+│       │   ├── gsheet.py          # Google Sheets API
+│       │   └── tim_db.py          # PostgreSQL AD users
 │       ├── transform/
+│       │   ├── sharepoint.py      # SharePoint трансформации
+│       │   └── gsheet.py          # GSheet трансформации
 │       └── load/
+│           └── sharepoint.py      # UPSERT в datalake
 │
 ├── config/
 │   ├── revitmaterials-db15db824f22.json  # Google Service Account
@@ -62,10 +82,27 @@ airflow-dags/
 ├── DEPLOYMENT.md                   # 🔥 ГЛАВНАЯ ИНСТРУКЦИЯ
 ├── QUICK_REFERENCE.md              # ⚡ Быстрая справка
 ├── PROJECT_ANALYSIS.md             # 📊 Анализ проекта
+├── REFACTORING_REPORT.md           # 🆕 Отчет по рефакторингу
 ├── README_ETL_MIGRATION.md         # 📖 История миграции
 ├── requirements.txt                # Python dependencies
 └── README.md                       # Этот файл
 ```
+
+### 🆕 Новые модули (v1.1)
+
+**dags/config.py** - Централизованная конфигурация:
+- `BIM_USERS` - список BIM пользователей (18 человек)
+- `FORBIDDEN_USERS`, `TO_REMOVE` - фильтры пользователей
+- `DISCIPLINE_MAPPING` - маппинг дисциплин
+- `TYPE_REQUEST_MAPPING` - маппинг типов запросов
+- Константы для разделов и стадий проектов
+
+**dags/utils.py** - Общие утилиты:
+- `extract_short_name()` - извлечение короткого названия проекта
+- `check_responsible()`, `remove_specific()` - фильтрация пользователей
+- `clean_html_safe()` - обработка HTML
+- `workdays_diff()` - подсчет рабочих дней
+- `get_project_solution()`, `get_project_stage()` - определение разделов/стадий
 
 ---
 
@@ -192,15 +229,52 @@ tail -f $AIRFLOW_HOME/logs/scheduler/latest/*.log
 
 ## 📝 Версии и история
 
-**Текущая версия:** 1.0 (после удаления Yougile)
+**Текущая версия:** 1.1 (после рефакторинга 2025-10-23)
 
-**Последние изменения:**
+### Версия 1.1 - Рефакторинг кодовой базы (2025-10-23)
+- ✅ Создан `dags/config.py` с централизованными константами
+- ✅ Создан `dags/utils.py` с общими утилитами
+- ✅ Устранено дублирование константы BIM_USERS (было 4 версии → стало 1)
+- ✅ Проведен анализ связности кода
+- ✅ Выявлен неиспользуемый код (etl_pipelines/extract/gsheet.py)
+- ✅ Создан детальный отчет [REFACTORING_REPORT.md](REFACTORING_REPORT.md)
+- ✅ Обновлена документация
+
+### Версия 1.0 - После удаления Yougile
 - ✅ Полностью удалён Yougile ETL DAG и все связанные метрики
 - ✅ Очищен config/tokens.json от Yougile токенов
 - ✅ Обновлена документация
 - ✅ Создана полная инструкция по запуску
 
 **Миграция:** Проект мигрирован из Jupyter notebooks в Airflow DAGs (см. [README_ETL_MIGRATION.md](README_ETL_MIGRATION.md))
+
+---
+
+## 📈 Статистика проекта
+
+| Метрика | Значение |
+|---------|----------|
+| Python файлов | 28 |
+| DAG файлов | 6 |
+| Extract функций | 14 |
+| Transform функций | 6 |
+| Load функций | 4 |
+| Строк кода | ~2100 |
+| Целевых таблиц | 9 |
+| Источников данных | 4 (PostgreSQL, GitLab, SharePoint, Google Sheets) |
+
+### Архитектурные особенности
+
+✅ **Сильные стороны:**
+- Четкое разделение на Extract/Transform/Load
+- Использование DataFrame для универсальности
+- Параллельная обработка (GitLab extraction)
+- Инкрементальная загрузка (projectsync)
+- XCom для передачи данных между задачами
+- Централизованная конфигурация (v1.1)
+
+⚠️ **Области для улучшения:**
+- См. [REFACTORING_REPORT.md](REFACTORING_REPORT.md) для детального плана
 
 ---
 
@@ -214,6 +288,7 @@ tail -f $AIRFLOW_HOME/logs/scheduler/latest/*.log
 ## 👤 Авторы
 
 **Миграция выполнена:** Claude Code
+**Рефакторинг выполнен:** Claude Code (2025-10-23)
 **Исходный проект:** ETL-pipeline
 
 ---
@@ -224,4 +299,5 @@ tail -f $AIRFLOW_HOME/logs/scheduler/latest/*.log
 
 ---
 
-**Дата последнего обновления:** 2025-10-22
+**Дата последнего обновления:** 2025-10-23
+**Версия:** 1.1

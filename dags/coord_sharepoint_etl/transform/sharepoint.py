@@ -1,142 +1,19 @@
 import pandas as pd
 import numpy as np
-from bs4 import BeautifulSoup
-import ast
-import re
 from workalendar.europe import Russia
 
-LOCAL_TZ = 'Asia/Yekaterinburg'  # Екатеринбург, UTC+5
+# Импорт из централизованной конфигурации и утилит
+from config import (
+    BIM_USERS, TO_REMOVE, FORBIDDEN_USERS,
+    DISCIPLINE_MAPPING, TYPE_REQUEST_MAPPING,
+    LOCAL_TIMEZONE, WORKDAY_START_HOUR, WORKDAY_END_HOUR
+)
+from utils import (
+    parse_responsible_ids, to_local, clean_html_safe,
+    extract_number, remove_specific, check_responsible, clean_type_request
+)
+
 cal = Russia()
-
-# Функции
-def parse_responsible_ids(val):
-    try:
-        obj = ast.literal_eval(val)
-        return obj.get('results', [])
-    except Exception:
-        return []
-
-
-def to_local(dt):
-    """Переводит UTC datetime в локальное время Екатеринбурга, убирает tzinfo для совместимости с workalendar."""
-    # Если уже pd.Timestamp и без tzinfo, считаем что это UTC
-    dt = pd.to_datetime(dt)
-    if dt.tzinfo is None:
-        dt = dt.tz_localize('UTC')
-    return dt.tz_convert(LOCAL_TZ).replace(tzinfo=None)     
-   
-
-def workdays_diff(row):
-    start = row["created"]
-    end = row["closing_date"]
-    if pd.isnull(start) or pd.isnull(end):
-        return np.nan
-
-    # Переводим в локальное время Екатеринбурга
-    start = to_local(start)
-    end = to_local(end)
-
-    # Настройки рабочего дня
-    workday_start = 8  # 8:00
-    workday_end = 17   # 17:00
-    work_hours = workday_end - workday_start
-
-    if start.date() < end.date():
-        days_between = cal.get_working_days_delta(start.date(), end.date()) - 1
-        days_between = max(0, days_between)
-
-        # Доля первого дня
-        if cal.is_working_day(start.date()):
-            first_day_hours = workday_end - max(start.hour + start.minute/60, workday_start)
-            first_day_hours = np.clip(first_day_hours, 0, work_hours)
-            first_day_part = first_day_hours / work_hours
-        else:
-            first_day_part = 0
-
-        # Доля последнего дня
-        if cal.is_working_day(end.date()):
-            last_day_hours = min(end.hour + end.minute/60, workday_end) - workday_start
-            last_day_hours = np.clip(last_day_hours, 0, work_hours)
-            last_day_part = last_day_hours / work_hours
-        else:
-            last_day_part = 0
-
-        total = days_between + first_day_part + last_day_part
-    else:
-        if cal.is_working_day(start.date()):
-            t1 = max(start.hour + start.minute/60, workday_start)
-            t2 = min(end.hour + end.minute/60, workday_end)
-            hours = np.clip(t2 - t1, 0, work_hours)
-            total = hours / work_hours
-        else:
-            total = 0
-
-    return round(total, 2)
-
-
-def clean_html_safe(html_string):
-    """Безопасно извлекает текст из HTML"""
-    # Проверяем на None, NaN, пустую строку
-    if pd.isna(html_string) or html_string == '' or html_string is None:
-        return ''
-    
-    try:
-        # Преобразуем в строку на всякий случай
-        html_str = str(html_string)
-        
-        # Если это не HTML (нет тегов), возвращаем как есть
-        if '<' not in html_str or '>' not in html_str:
-            return html_str.strip()
-        
-        # Парсим HTML
-        soup = BeautifulSoup(html_str, 'html.parser')
-        text = soup.get_text(separator=' ', strip=True)
-        
-        # Убираем лишние пробелы
-        text = ' '.join(text.split())
-        return text
-        
-    except Exception as e:
-        # Если что-то пошло не так, возвращаем исходную строку
-        print(f"Ошибка обработки HTML: {e}")
-        return str(html_string) if html_string is not None else ''
-
-
-def extract_number(title):
-    try:
-        parts = title.split("от")
-        if len(parts) < 2:
-            return title
-        number_part = parts[0].replace("№", "").strip()
-        return number_part
-    except Exception:
-        return title
-
-
-to_remove = ['мельникова', 'шишляева']
-def remove_specific(val):
-    if not isinstance(val, str):
-        return False
-    first = val.strip().lower()
-    return any(first.startswith(fam) for fam in to_remove)
-
-
-forbidden = ['овсянкин', 'кузовлева', 'кичигин', 'андреев', 'романова', 'урманчеев']
-def check_responsible(val):
-    if not isinstance(val, str):
-        return False
-    first = val.split(",")[0].strip().lower()
-    return any(fam in first for fam in forbidden)
-
-
-def clean_type_request(value):
-    """
-    Удаляет ведущие цифры и точку из строки.
-    Пример: '1. Семейства' → 'Семейства'
-    """
-    if isinstance(value, str):
-        return re.sub(r'^\d+\.\s*', '', value).strip()
-    return value
 
 
 def transform_sharepoint_data(tasks_path: str, users_path: str, ad_path: str, output_path: str, **context) -> str:
@@ -178,7 +55,15 @@ def transform_sharepoint_data(tasks_path: str, users_path: str, ad_path: str, ou
         df_tasks[col] = pd.to_datetime(df_tasks[col].replace("Нет данных", pd.NaT), errors='coerce', utc=True)
     
     # Считаем рабочие дни
-    df_tasks["work_days_duration"] = df_tasks.apply(workdays_diff, axis=1)  
+    from utils import workdays_diff as calc_workdays
+    df_tasks["work_days_duration"] = df_tasks.apply(
+        lambda row: calc_workdays(
+            row["created"], row["closing_date"],
+            workday_start=WORKDAY_START_HOUR,
+            workday_end=WORKDAY_END_HOUR,
+            calendar=cal
+        ), axis=1
+    )  
 
     # Обновляем порядок с новыми именами
     desired_order = [
@@ -208,51 +93,15 @@ def transform_sharepoint_data(tasks_path: str, users_path: str, ad_path: str, ou
 
     # Очищаем и маппим type_request
     df_tasks['type_request'] = df_tasks['type_request'].apply(clean_type_request)
-    type_request_mapping = {
-        'Совместная работа': 'Консультирование',
-        'Семейства': 'Семейства',
-        'BIM поддержка': 'Консультирование',
-        'Проверка ИМ': 'Аудит модели',
-        'Выгрузка из BIM Tangl': 'Tangl',
-        'Другое': 'Другое',
-        'Виды, листы, спецификации': 'Консультирование',
-        'Аудит модели': 'Аудит модели',
-        'Обучение': 'Обучение',
-        'Корректировка модели': 'Корректировка модели',
-        'Экспорт данных': 'Аудит модели',
-        'Нет данных': 'Другое',
-        'Работа с объектами Civil': 'Civil',
-        'Задачи BIM Tangl': 'Tangl',
-        'Блоки': 'Другое',
-        'Проверка файлов': 'Аудит модели'
-    }
-
-    df_tasks['type_request_group'] = df_tasks['type_request'].map(type_request_mapping).fillna('Другое')
+    df_tasks['type_request_group'] = df_tasks['type_request'].map(TYPE_REQUEST_MAPPING).fillna('Другое')
     cols = df_tasks.columns.tolist()
     cols.remove('type_request_group')
     insert_pos = cols.index('type_request') + 1
     cols.insert(insert_pos, 'type_request_group')
     df_tasks = df_tasks[cols]
 
-    # Очищаем discipline
-    discipline_mapping = {
-        'КР/КЖ': 'Конструкции',
-        'АР/ЭП': 'Архитектура',
-        'ОВ/ВК/ТХ': 'Инженерные системы',
-        'Другое': 'Другое',
-        'Сметы': 'Сметы',
-        'ГП/ПОС': 'Генплан и ПОС',
-        'ПТО': 'ПТО',
-        'Внутренняя BIM': 'Внутренняя BIM',
-        'КАСК': 'ПТО',
-        'ЭЛ/СС/АК': 'Электросети и связь',
-        'ТС/НВК/НСС': 'Наружные сети',
-        'Распределять по площадям': 'Другое',
-        'Распределять вручную': 'Другое'
-    }
-
-    # Применение маппинга
-    df_tasks['discipline_group'] = df_tasks['discipline'].map(discipline_mapping).fillna('Другое')
+    # Очищаем discipline и применяем маппинг
+    df_tasks['discipline_group'] = df_tasks['discipline'].map(DISCIPLINE_MAPPING).fillna('Другое')
 
     # Вставка discipline_group после discipline
     cols = df_tasks.columns.tolist()

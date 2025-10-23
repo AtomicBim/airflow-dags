@@ -1,13 +1,9 @@
 import pandas as pd
 import uuid
 
-def check_responsible(val):
-    """Проверяет, входит ли ответственный в список запрещенных."""
-    forbidden = ['овсянкин', 'кузовлева', 'кичигин', 'андреев']
-    if not isinstance(val, str):
-        return False
-    first = val.split(",")[0].strip().lower()
-    return any(fam in first for fam in forbidden)
+# Импорт из централизованной конфигурации и утилит
+from config import DISCIPLINE_MAPPING
+from utils import check_responsible
 
 def generate_deterministic_guid(row: pd.Series) -> str:
     """
@@ -90,12 +86,7 @@ def transform_gsheet_data_df(df_families: pd.DataFrame, **context) -> pd.DataFra
         df_families['discipline'] = 'Не указано'
 
     # Сопоставление групп дисциплин
-    discipline_mapping = {
-        'АР': 'Архитектура', 'ВК': 'Инженерные системы', 'ОВ': 'Инженерные системы',
-        'КЖ': 'Конструкции', 'ТХ': 'Инженерные системы', 'ЭЛ': 'Электросети и связь',
-        'КМ': 'Конструкции',
-    }
-    df_families['discipline_group'] = df_families['discipline'].map(lambda x: discipline_mapping.get(x, 'Другое'))
+    df_families['discipline_group'] = df_families['discipline'].map(DISCIPLINE_MAPPING).fillna('Другое')
 
     # Остальные поля
     df_families['priority'] = 'Обычный'

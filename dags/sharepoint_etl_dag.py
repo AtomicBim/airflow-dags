@@ -9,9 +9,10 @@ from airflow.models.variable import Variable
 from airflow.hooks.base import BaseHook
 
 # Импорт модульных функций
-from coord_sharepoint_etl.extract import sharepoint as extract_sp, tim_db
+from coord_sharepoint_etl.extract import sharepoint as extract_sp
 from coord_sharepoint_etl.transform import sharepoint as transform_sp
 from coord_sharepoint_etl.load import sharepoint as load_sp
+from etl_pipelines.extract import pluginsdb  # Используем общий extract для AD users
 
 # --- Переменные Airflow ---
 # Используем единый корень для данных, но с отдельной подпапкой
@@ -66,7 +67,7 @@ def sharepoint_etl():
     def extract_ad_data() -> str:
         """Извлекает данные пользователей AD из БД."""
         output_path = str(DATA_ROOT / "tim_export_ad_user.csv")
-        return tim_db.extract_ad_users(
+        return pluginsdb.extract_ad_users(
             postgres_conn_id="tim_db_pluginsdb", 
             output_path=output_path
         )

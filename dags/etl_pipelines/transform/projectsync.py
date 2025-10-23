@@ -6,133 +6,9 @@ import pandas as pd
 import numpy as np
 from typing import Tuple
 
-
-# Константы
-BIM_USERS = {
-    'Колпаков Семен Дмитриевич', 'Пятков Роман Анатольевич',
-    'Андреев Александр Константинович', 'Кичигин Андрей Владимирович',
-    'Панов Антон Владимирович', 'Васьков Денис Игоревич', 'Попов Антон Михайлович',
-    'Кузовлева Ольга Сергеевна', 'Калачев Даниил Артемович',
-    'Григорьев Роман Николаевич', 'Красильников Дмитрий Сергеевич',
-    'Литуева Юлия Дмитриевна', 'Жук Виталий Томашевич', 'Овсянкин Роман Николаевич',
-    'Романова Анна Вячеславовна', 'Коновалов Василий Сергеевич',
-    'Урманчеев Роман Дамирович', 'Докладчик 708'
-}
-
-
-def extract_short_name(name: str) -> str:
-    """Извлекает короткое название проекта."""
-    parts = name.split('_')
-    return '_'.join(parts[:2]) if len(parts) >= 2 else name
-
-
-def extract_file_storage_name(row):
-    """Извлекает название файлового хранилища."""
-    project = row.get("project_name")
-    username = row.get("username")
-
-    if pd.isna(project) or pd.isna(username):
-        return project
-
-    parts = str(project).split("_")
-    if len(parts) < 2:
-        return project
-
-    last_part = parts[-1].strip().lower()
-    user_name = str(username).strip().lower()
-
-    if last_part == user_name:
-        return "_".join(parts[:-1])
-    else:
-        return project
-
-
-def get_project_solution(row):
-    """Определяет раздел проекта (АР, КР и т.д.)."""
-    name = str(row["project_name"])
-    obj = row["object_name"]
-
-    if obj == "Кортрос":
-        section_map_kortros = {
-            "_AR": "АР", "_AI": "АИ",
-            "_KR": "КР", "_AGK": "АГК",
-            "_VK": "ВК", "_EL": "ЭЛ",
-            "_OV": "ОВ", "_AK": "АК",
-            "_SS": "СС", "_P": "П",
-            "_R": "Р", "_TS": "ТС",
-            "_AP": "АП"
-        }
-
-        for pattern, section in section_map_kortros.items():
-            if pattern in name:
-                return section
-        return "НД"
-
-    else:
-        section_map_rus = {
-            "_АР": "АР", "_Форэскиз": "АР",
-            "_АИ": "АИ", "_КЖ": "КЖ",
-            "_ВК": "ВК", "_ЭЛ": "ЭЛ",
-            "_ТС": "ТС", "_ТХ": "ТХ",
-            "_ОВ": "ОВ", "_КР": "КР",
-            "_КМ": "КМ", "_АП": "АП",
-            "_ПТ": "ПТ", "_СС": "СС",
-            "_ПБ": "ПБ", "_ЭГ": "ЭГ",
-            "_АП": "АП"
-        }
-
-        for pattern, section in section_map_rus.items():
-            if pattern in name:
-                return section
-        return "НД"
-
-
-def get_project_stage(row):
-    """Определяет стадию проекта (П, Р, ЭП и т.д.)."""
-    name = str(row["project_name"])
-    obj = row["object_name"]
-
-    if obj == "Кортрос":
-        stage_map_kortros = {
-            ("contains", "_P_"): "П",
-            ("contains", "_R_"): "Р",
-            ("contains", "_AGK_"): "ГК",
-            ("endswith", "_P"): "П",
-            ("endswith", "_R"): "Р",
-            ("endswith", "_AGK"): "ГК"
-        }
-
-        for (mode, pattern), stage in stage_map_kortros.items():
-            if (mode == "contains" and pattern in name) or \
-               (mode == "endswith" and name.endswith(pattern)):
-                return stage
-
-        return "НД"
-
-    else:
-        stage_map = {
-            ("contains", "_П_"): "П",
-            ("contains", "_Р_"): "Р",
-            ("contains", "_РД_"): "Р",
-            ("contains", "_ЭП_"): "ЭП",
-            ("contains", "_Форэскиз_"): "ЭП",
-            ("contains", "_Эскиз_"): "ЭП",
-            ("contains", "_ФЭ_"): "ЭП",
-            ("endswith", "_П"): "П",
-            ("endswith", "_Р"): "Р",
-            ("endswith", "_РД"): "Р",
-            ("endswith", "_ЭП"): "ЭП",
-            ("endswith", "_Форэскиз"): "ЭП",
-            ("endswith", "_Эскиз"): "ЭП",
-            ("endswith", "_ФЭ"): "ЭП"
-        }
-
-        for (mode, pattern), stage in stage_map.items():
-            if (mode == "contains" and pattern in name) or \
-               (mode == "endswith" and name.endswith(pattern)):
-                return stage
-
-        return "НД"
+# Импорт из централизованной конфигурации и утилит
+from config import BIM_USERS
+from utils import extract_short_name, extract_file_storage_name, get_project_solution, get_project_stage
 
 
 def transform_projectsync_analytics(
@@ -203,8 +79,12 @@ def transform_projectsync_analytics(
     df_sync["file_storage_name"] = df_sync.apply(extract_file_storage_name, axis=1)
 
     # === Определение раздела и стадии проекта ===
-    df_sync["project_solution_name"] = df_sync.apply(get_project_solution, axis=1)
-    df_sync["project_stage_name"] = df_sync.apply(get_project_stage, axis=1)
+    df_sync["project_solution_name"] = df_sync.apply(
+        lambda row: get_project_solution(row["project_name"], row["object_name"]), axis=1
+    )
+    df_sync["project_stage_name"] = df_sync.apply(
+        lambda row: get_project_stage(row["project_name"], row["object_name"]), axis=1
+    )
 
     # === Заполнение пропусков ===
     str_cols = df_sync.select_dtypes(include='object').columns
