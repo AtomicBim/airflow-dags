@@ -1,5 +1,5 @@
 """Load модули для ETL pipelines."""
 
-from etl_pipelines.load import datalake
-
-__all__ = ['datalake']
+# Пустой __init__.py для избежания DagBag import timeout
+# Импортируйте модули напрямую:
+# from etl_pipelines.load import datalake

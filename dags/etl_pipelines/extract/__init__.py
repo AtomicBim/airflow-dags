@@ -1,5 +1,5 @@
 """Extract модули для ETL pipelines."""
 
-from etl_pipelines.extract import pluginsdb, gitlab
-
-__all__ = ['pluginsdb', 'gitlab']
+# Пустой __init__.py для избежания DagBag import timeout
+# Импортируйте модули напрямую:
+# from etl_pipelines.extract import pluginsdb, gitlab

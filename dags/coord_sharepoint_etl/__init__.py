@@ -1,5 +1,7 @@
-"""SharePoint ETL <>4C;8 4;O Airflow DAGs."""
+"""SharePoint ETL модули для Airflow DAGs."""
 
-from coord_sharepoint_etl import extract, transform, load
-
-__all__ = ['extract', 'transform', 'load']
+# Пустой __init__.py для избежания DagBag import timeout
+# Импортируйте модули напрямую в DAG файлах:
+# from coord_sharepoint_etl.extract import sharepoint, gsheet
+# from coord_sharepoint_etl.transform import sharepoint, gsheet
+# from coord_sharepoint_etl.load import sharepoint
