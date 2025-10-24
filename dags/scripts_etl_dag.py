@@ -26,7 +26,7 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
 @dag(
     dag_id="scripts_etl_dag",
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
-    schedule="0 6 * * *",  # Ежедневно в 6:00 UTC
+    schedule="@hourly",
     catchup=False,
     tags=["scripts", "etl", "analytics", "main"],
     doc_md="""

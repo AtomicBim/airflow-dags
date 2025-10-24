@@ -26,7 +26,7 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
 @dag(
     dag_id="gitlab_etl_dag",
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
-    schedule="0 5 * * 0",  # Еженедельно по воскресеньям в 5:00 UTC
+    schedule="0 */4 * * *",  # Каждые 4 часа
     catchup=False,
     tags=["gitlab", "etl", "analytics", "loc"],
     doc_md="""
