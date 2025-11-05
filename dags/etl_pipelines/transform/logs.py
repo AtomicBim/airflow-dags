@@ -39,15 +39,7 @@ def transform_logs_analytics(
 
     # === Слияние с плагинами ===
     df_logs = df_logs.merge(
-        df_plugin[["id", "display_name"]],
-        how="left",
-        left_on="plugin_id",
-        right_on="id"
-    )
-    df_logs.drop(columns=['id'], inplace=True)
-
-    df_logs = df_logs.merge(
-        df_plugin[["id", "developer"]],
+        df_plugin[["id", "display_name", "developer"]],
         how="left",
         left_on="plugin_id",
         right_on="id"

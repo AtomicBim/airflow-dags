@@ -27,7 +27,10 @@ def transform_plugin_engagement(
     - Общее количество запусков (интенсивность использования)
     
     Методология:
-    1. Фильтрация: исключаются BIM-пользователи
+    1. Определение целевой аудитории:
+       - Берутся ТОЛЬКО уникальные пользователи из monitoring (кто реально использует плагины)
+       - Исключаются BIM-специалисты из config.BIM_USERS
+       - Результат: проектировщики, активно использующие плагины
     2. Извлечение дат: все уникальные даты из мониторинга
     3. Для КАЖДОГО дня:
        - Агрегация кумулятивно (данные до конца дня)
@@ -76,7 +79,7 @@ def transform_plugin_engagement(
     print("\n2. Обработка дат...")
     
     # Возможные варианты колонок с датой
-    date_columns = ['created_at', 'timestamp', 'date', 'created', 'datetime']
+    date_columns = ['launch_date', 'created_at', 'timestamp', 'date', 'created', 'datetime']
     date_column = None
     
     for col in date_columns:
@@ -100,10 +103,12 @@ def transform_plugin_engagement(
     print(f"   - Диапазон дат: {df_monitoring['day'].min()} - {df_monitoring['day'].max()}")
     print(f"   - Уникальных дней: {df_monitoring['day'].nunique()}")
     
-    # 3. Объединение с AD users и фильтрация
-    print("\n3. Объединение с AD users и фильтрация проектировщиков...")
+    # 3. Определение уникальных пользователей из monitoring
+    print("\n3. Определение активных пользователей плагинов...")
     
+    # Получаем уникальных пользователей, которые реально используют плагины
     if 'ad_user_id' in df_monitoring.columns and 'id' in df_ad.columns:
+        # Объединяем monitoring с AD users для получения ФИО
         df_merged = df_monitoring.merge(
             df_ad[['id', 'name']],
             left_on='ad_user_id',
@@ -114,11 +119,17 @@ def transform_plugin_engagement(
     else:
         raise ValueError("Отсутствуют необходимые колонки для объединения данных")
     
-    # Фильтруем BIM-пользователей
+    # Удаляем записи без ФИО (если есть)
+    df_merged = df_merged.dropna(subset=['user_name'])
+    
+    print(f"   - Всего уникальных пользователей в monitoring: {df_merged['user_name'].nunique()}")
+    print(f"   - BIM-специалистов для исключения: {len(bim_users)}")
+    
+    # КРИТЕРИЙ ОТБОРА: Проектировщики = уникальные пользователи из monitoring минус BIM-специалисты
     df_designers = df_merged[~df_merged['user_name'].isin(bim_users)].copy()
     
-    print(f"   - Всего пользователей с активностью: {df_merged['user_name'].nunique()}")
-    print(f"   - Проектировщиков (не BIM): {df_designers['user_name'].nunique()}")
+    unique_designers = df_designers['user_name'].nunique()
+    print(f"   - Проектировщиков (активных пользователей минус BIM): {unique_designers}")
     print(f"   - Записей мониторинга проектировщиков: {len(df_designers)}")
     
     if df_designers.empty:
@@ -154,10 +165,11 @@ def transform_plugin_engagement(
         return (series - min_val) / (max_val - min_val)
     
     # Для каждого дня рассчитываем кумулятивную метрику
+    # ОПТИМИЗАЦИЯ: убрана .copy() для экономии памяти - filtered view используется только для агрегации
     for current_day in all_dates:
-        # Фильтруем данные до конца текущего дня включительно
-        df_until_day = df_designers[df_designers['day'] <= current_day].copy()
-        
+        # Фильтруем данные до конца текущего дня включительно (без копирования)
+        df_until_day = df_designers[df_designers['day'] <= current_day]
+
         # Агрегация кумулятивных метрик
         df_day_agg = df_until_day.groupby('user_name').agg(
             unique_plugins=(plugin_column, 'nunique'),

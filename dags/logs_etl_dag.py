@@ -15,6 +15,7 @@ from airflow.models.variable import Variable
 from etl_pipelines.extract import pluginsdb
 from etl_pipelines.transform import logs as transform_logs
 from etl_pipelines.load import datalake
+from common_tasks import extract_plugins_task
 
 
 # Переменные Airflow
@@ -44,15 +45,6 @@ def logs_etl():
         """Извлекает логи из pluginsdb."""
         output_path = str(DATA_ROOT / "tim_export_log.csv")
         return pluginsdb.extract_logs(
-            postgres_conn_id="tim_db_pluginsdb",
-            output_path=output_path
-        )
-
-    @task
-    def extract_plugins() -> str:
-        """Извлекает плагины из pluginsdb."""
-        output_path = str(DATA_ROOT / "tim_export_plugin.csv")
-        return pluginsdb.extract_plugins(
             postgres_conn_id="tim_db_pluginsdb",
             output_path=output_path
         )
@@ -105,7 +97,7 @@ def logs_etl():
 
     # Определение зависимостей
     logs_csv = extract_logs()
-    plugin_csv = extract_plugins()
+    plugin_csv = extract_plugins_task(output_path=str(DATA_ROOT / "tim_export_plugin.csv"))
 
     transformed_paths = transform_logs_data(logs_path=logs_csv, plugin_path=plugin_csv)
 

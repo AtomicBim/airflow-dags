@@ -16,6 +16,7 @@ from airflow.hooks.base import BaseHook
 from etl_pipelines.extract import pluginsdb, gitlab as extract_gitlab
 from etl_pipelines.transform import scripts as transform_scripts
 from etl_pipelines.load import datalake
+from common_tasks import extract_plugins_task
 
 
 # Переменные Airflow
@@ -56,15 +57,6 @@ def scripts_etl():
         """Извлекает AD users из pluginsdb."""
         output_path = str(DATA_ROOT / "tim_export_ad_user.csv")
         return pluginsdb.extract_ad_users(
-            postgres_conn_id="tim_db_pluginsdb",
-            output_path=output_path
-        )
-
-    @task
-    def extract_plugins() -> str:
-        """Извлекает плагины из pluginsdb."""
-        output_path = str(DATA_ROOT / "tim_export_plugin.csv")
-        return pluginsdb.extract_plugins(
             postgres_conn_id="tim_db_pluginsdb",
             output_path=output_path
         )
@@ -123,16 +115,16 @@ def scripts_etl():
         # Сохраняем DataFrames во временные файлы
         designers_path = str(DATA_ROOT / "scripts_designers_transformed.csv")
         bim_path = str(DATA_ROOT / "scripts_bim_transformed.csv")
-        plugin_path = str(DATA_ROOT / "scripts_plugin_transformed.csv")
+        plugin_transformed_path = str(DATA_ROOT / "scripts_plugin_transformed.csv")
 
         df_designers.to_csv(designers_path, index=False, encoding='utf-8')
         df_bim.to_csv(bim_path, index=False, encoding='utf-8')
-        df_plugin.to_csv(plugin_path, index=False, encoding='utf-8')
+        df_plugin.to_csv(plugin_transformed_path, index=False, encoding='utf-8')
 
         return {
             "designers_path": designers_path,
             "bim_path": bim_path,
-            "plugin_path": plugin_path
+            "plugin_path": plugin_transformed_path
         }
 
     # === Load tasks (параллельно после transform) ===
@@ -180,7 +172,7 @@ def scripts_etl():
 
     # Все extract задачи запускаются параллельно
     ad_csv = extract_ad_users()
-    plugin_csv = extract_plugins()
+    plugin_csv = extract_plugins_task(output_path=str(DATA_ROOT / "tim_export_plugin.csv"))
     monitoring_csv = extract_monitoring()
     dev_stage_csv = extract_development_stage()
     gitlab_json = extract_gitlab_loc()

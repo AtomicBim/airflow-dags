@@ -8,7 +8,6 @@ import pandas as pd
 
 def transform_gitlab_analytics(
     gitlab_path: str,
-    plugin_path: str,
     **context
 ) -> pd.DataFrame:
     """
@@ -16,7 +15,6 @@ def transform_gitlab_analytics(
 
     Args:
         gitlab_path: Путь к JSON с данными GitLab
-        plugin_path: Путь к CSV с данными плагинов (не используется, оставлен для совместимости)
 
     Returns:
         pd.DataFrame: Итоговый DataFrame с данными GitLab

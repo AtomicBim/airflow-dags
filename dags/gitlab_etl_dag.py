@@ -13,7 +13,7 @@ from airflow.models.variable import Variable
 from airflow.hooks.base import BaseHook
 
 # Импорт модульных функций
-from etl_pipelines.extract import pluginsdb, gitlab as extract_gitlab
+from etl_pipelines.extract import gitlab as extract_gitlab
 from etl_pipelines.transform import gitlab as transform_gitlab
 from etl_pipelines.load import datalake
 
@@ -59,23 +59,10 @@ def gitlab_etl():
         )
 
     @task
-    def extract_plugins() -> str:
-        """Извлекает плагины из pluginsdb."""
-        output_path = str(DATA_ROOT / "tim_export_plugin.csv")
-        return pluginsdb.extract_plugins(
-            postgres_conn_id="tim_db_pluginsdb",
-            output_path=output_path
-        )
-
-    @task
-    def transform_gitlab_data(
-        gitlab_path: str,
-        plugin_path: str
-    ) -> str:
+    def transform_gitlab_data(gitlab_path: str) -> str:
         """Трансформирует данные GitLab."""
         df_gitlab = transform_gitlab.transform_gitlab_analytics(
-            gitlab_path=gitlab_path,
-            plugin_path=plugin_path
+            gitlab_path=gitlab_path
         )
 
         # Сохраняем DataFrame
@@ -99,12 +86,8 @@ def gitlab_etl():
 
     # Определение зависимостей
     gitlab_json = extract_gitlab_loc()
-    plugin_csv = extract_plugins()
 
-    transformed_path = transform_gitlab_data(
-        gitlab_path=gitlab_json,
-        plugin_path=plugin_csv
-    )
+    transformed_path = transform_gitlab_data(gitlab_path=gitlab_json)
 
     load_gitlab_data(gitlab_path=transformed_path)
 

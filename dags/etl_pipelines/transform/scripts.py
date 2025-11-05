@@ -81,14 +81,17 @@ def transform_scripts_analytics(
     ).drop(columns=['id'])
 
     # === Заполнение пропусков ===
-    str_cols = df_monitoring.select_dtypes(include='object').columns
-    df_monitoring[str_cols] = df_monitoring[str_cols].fillna("Нет данных")
+    # Определяем значения для заполнения в один проход
+    fill_values = {}
+    for col in df_monitoring.columns:
+        if df_monitoring[col].dtype == 'object':
+            fill_values[col] = "Нет данных"
+        elif pd.api.types.is_numeric_dtype(df_monitoring[col]):
+            fill_values[col] = 0
+        elif pd.api.types.is_datetime64_any_dtype(df_monitoring[col]):
+            fill_values[col] = pd.NaT
 
-    num_cols = df_monitoring.select_dtypes(include=['number', 'Int64']).columns
-    df_monitoring[num_cols] = df_monitoring[num_cols].fillna(0)
-
-    date_cols = df_monitoring.select_dtypes(include='datetime').columns
-    df_monitoring[date_cols] = df_monitoring[date_cols].fillna(pd.NaT)
+    df_monitoring.fillna(fill_values, inplace=True)
 
     # === Разделение на BIM и designers ===
     df_monitoring_bim = df_monitoring[df_monitoring['is_bim'] == True].copy()

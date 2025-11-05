@@ -75,8 +75,18 @@ def transform_projectsync_analytics(
     # === Флаг отсоединенных проектов ===
     df_sync["is_detached"] = df_sync["project_name"].str.contains("отсоединено", case=False, na=False).astype(int)
 
-    # === Извлечение имени файлового хранилища ===
-    df_sync["file_storage_name"] = df_sync.apply(extract_file_storage_name, axis=1)
+    # === Извлечение имени файлового хранилища (векторизованная версия) ===
+    # Разбиваем project_name на части
+    project_parts = df_sync["project_name"].astype(str).str.split("_")
+    # Получаем последнюю часть
+    last_part = project_parts.str[-1].str.strip().str.lower()
+    # Получаем username в нижнем регистре
+    username_lower = df_sync["username"].astype(str).str.strip().str.lower()
+    # Проверяем совпадение
+    mask_match = (last_part == username_lower) & (project_parts.str.len() >= 2)
+    # Создаем file_storage_name: если совпадает - убираем последнюю часть, иначе оставляем как есть
+    df_sync["file_storage_name"] = df_sync["project_name"].copy()
+    df_sync.loc[mask_match, "file_storage_name"] = project_parts[mask_match].str[:-1].str.join("_")
 
     # === Определение раздела и стадии проекта ===
     df_sync["project_solution_name"] = df_sync.apply(
@@ -87,14 +97,17 @@ def transform_projectsync_analytics(
     )
 
     # === Заполнение пропусков ===
-    str_cols = df_sync.select_dtypes(include='object').columns
-    df_sync[str_cols] = df_sync[str_cols].fillna("Нет данных")
+    # Определяем значения для заполнения в один проход
+    fill_values = {}
+    for col in df_sync.columns:
+        if df_sync[col].dtype == 'object':
+            fill_values[col] = "Нет данных"
+        elif pd.api.types.is_numeric_dtype(df_sync[col]):
+            fill_values[col] = 0
+        elif pd.api.types.is_datetime64_any_dtype(df_sync[col]):
+            fill_values[col] = pd.NaT
 
-    num_cols = df_sync.select_dtypes(include=['number', 'Int64']).columns
-    df_sync[num_cols] = df_sync[num_cols].fillna(0)
-
-    date_cols = df_sync.select_dtypes(include='datetime').columns
-    df_sync[date_cols] = df_sync[date_cols].fillna(pd.NaT)
+    df_sync.fillna(fill_values, inplace=True)
 
     # === Разделение на BIM и designers (только не отсоединенные) ===
     df_sync_bim = df_sync[(df_sync['is_bim'] == True) & (df_sync['is_detached'] == 0)].copy()

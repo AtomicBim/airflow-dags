@@ -19,11 +19,6 @@ from etl_pipelines.load import datalake
 # Импорт конфигурации
 from config import BIM_USERS
 
-
-# Переменные Airflow
-DATA_ROOT = Path(Variable.get("ETL_DATA_ROOT_PATH", default_var="/tmp/data")) / "plugin_engagement"
-DATA_ROOT.mkdir(parents=True, exist_ok=True)
-
 # Весовые коэффициенты для расчета метрики
 # w1 - вес для количества уникальных плагинов
 # w2 - вес для количества запусков
@@ -102,12 +97,16 @@ WEIGHT_TOTAL_LAUNCHES = 0.5
 )
 def plugin_engagement_etl():
     
+    # Инициализация путей внутри DAG
+    data_root = Path(Variable.get("ETL_DATA_ROOT_PATH", default_var="/tmp/data")) / "plugin_engagement"
+    data_root.mkdir(parents=True, exist_ok=True)
+    
     # === Extract tasks (параллельно) ===
     
     @task
     def extract_ad_users() -> str:
         """Извлекает AD users из pluginsdb."""
-        output_path = str(DATA_ROOT / "ad_users.csv")
+        output_path = str(data_root / "ad_users.csv")
         return pluginsdb.extract_ad_users(
             postgres_conn_id="tim_db_pluginsdb",
             output_path=output_path
@@ -116,7 +115,7 @@ def plugin_engagement_etl():
     @task
     def extract_monitoring() -> str:
         """Извлекает данные мониторинга плагинов из pluginsdb."""
-        output_path = str(DATA_ROOT / "monitoring.csv")
+        output_path = str(data_root / "monitoring.csv")
         return pluginsdb.extract_monitoring(
             postgres_conn_id="tim_db_pluginsdb",
             output_path=output_path
@@ -151,7 +150,7 @@ def plugin_engagement_etl():
         )
         
         # Сохраняем результат во временный файл
-        output_path = str(DATA_ROOT / "plugin_engagement_transformed.csv")
+        output_path = str(data_root / "plugin_engagement_transformed.csv")
         df_engagement.to_csv(output_path, index=False, encoding='utf-8')
         
         print(f"\nТрансформация завершена. Результат сохранен: {output_path}")

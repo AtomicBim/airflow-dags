@@ -165,15 +165,16 @@ def load_incremental_to_postgres(
             df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
             unique_dates = df[date_column].dropna().dt.date.unique()
 
-            # Удаляем старые записи за эти даты
+            # Удаляем старые записи за эти даты (используем параметризованный запрос)
             if len(unique_dates) > 0:
-                dates_str = ", ".join([f"'{d}'" for d in unique_dates])
+                # Создаем плейсхолдеры для параметров (%s)
+                placeholders = ', '.join(['%s'] * len(unique_dates))
                 delete_sql = f"""
                     DELETE FROM {full_table_name}
-                    WHERE DATE("{date_column}") IN ({dates_str})
+                    WHERE DATE("{date_column}") IN ({placeholders})
                 """
-                print(f"Удаление старых данных за даты: {dates_str}")
-                cursor.execute(delete_sql)
+                print(f"Удаление старых данных за {len(unique_dates)} дат")
+                cursor.execute(delete_sql, tuple(unique_dates))
                 conn.commit()  # Коммитим удаление
         
         # Используем COPY для быстрой загрузки данных (проверенный метод из SharePoint ETL)

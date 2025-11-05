@@ -13,11 +13,12 @@ from utils import (
     extract_number, remove_specific, check_responsible, clean_type_request
 )
 
-cal = Russia()
-
 
 def transform_sharepoint_data(tasks_path: str, users_path: str, ad_path: str, output_path: str, **context) -> str:
     """Полный цикл трансформации данных SharePoint."""
+    # Инициализируем календарь внутри функции для безопасности при параллельном выполнении
+    cal = Russia()
+
     df_tasks = pd.read_csv(tasks_path)
     df_users = pd.read_csv(users_path)
     df_ad = pd.read_csv(ad_path)
@@ -55,6 +56,10 @@ def transform_sharepoint_data(tasks_path: str, users_path: str, ad_path: str, ou
         df_tasks[col] = pd.to_datetime(df_tasks[col].replace("Нет данных", pd.NaT), errors='coerce', utc=True)
     
     # Считаем рабочие дни
+    # NOTE: Для оптимизации на больших наборах данных (>50k строк) рассмотрите:
+    # 1. Кэширование результатов для одинаковых пар дат
+    # 2. Батч-обработку с использованием numpy vectorize
+    # 3. Использование внешней оптимизированной библиотеки
     from utils import workdays_diff as calc_workdays
     df_tasks["work_days_duration"] = df_tasks.apply(
         lambda row: calc_workdays(
@@ -142,11 +147,9 @@ def transform_sharepoint_data(tasks_path: str, users_path: str, ad_path: str, ou
         "responsible"
     ] = "Не назначен"
 
-    # Приводим даты
+    # Приводим даты (оптимизированная версия без apply)
     for col in ["created", "closing_date"]:
-        df_tasks[col] = df_tasks[col].apply(
-            lambda x: pd.to_datetime(x, errors='coerce') if x != "Нет данных" else pd.NaT
-        )
+        df_tasks[col] = pd.to_datetime(df_tasks[col].replace("Нет данных", pd.NaT), errors='coerce')
 
     # Удаляем дубликаты
     df_tasks = df_tasks.drop_duplicates(subset=["guid"], keep="first")
