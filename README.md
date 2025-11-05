@@ -2,8 +2,8 @@
 
 Комплексный ETL проект на Apache Airflow для аналитики плагинов, синхронизации данных и интеграций.
 
-**Последнее обновление:** 2025-10-23
-**Версия:** 1.1 (после рефакторинга)
+**Последнее обновление:** 2025-11-05
+**Версия:** 1.3 (Plugin Engagement: исторические данные)
 
 ---
 
@@ -27,7 +27,8 @@
 
 | DAG | Schedule | Описание |
 |-----|----------|----------|
-| **scripts_etl_dag** | Ежедневно 06:00 UTC | Основной комплексный pipeline: monitoring, plugins, gitlab |
+| **scripts_etl_dag** | Ежечасно (@hourly) | Основной комплексный pipeline: monitoring, plugins, gitlab |
+| **plugin_engagement_etl_dag** | Ежечасно (@hourly) | 🆕 Оценка использования плагинов проектировщиками |
 | **gitlab_etl_dag** | Воскресенье 05:00 UTC | Синхронизация GitLab проектов и обновление маппинга |
 | **projectsync_etl_dag** | Ежедневно 03:00 UTC | Инкрементальная загрузка синхронизации проектов |
 | **logs_etl_dag** | Ежедневно 02:00 UTC | Аналитика логов плагинов |
@@ -45,6 +46,7 @@ airflow-dags/
 │   ├── utils.py                    # 🆕 Общие утилиты для ETL
 │   │
 │   ├── scripts_etl_dag.py          # ⭐ Основной pipeline
+│   ├── plugin_engagement_etl_dag.py # 🆕 Plugin Engagement Score
 │   ├── gitlab_etl_dag.py           # GitLab LOC analytics
 │   ├── projectsync_etl_dag.py      # Project sync analytics
 │   ├── logs_etl_dag.py             # Logs analytics
@@ -57,6 +59,7 @@ airflow-dags/
 │   │   │   └── gitlab.py          # GitLab LOC extraction
 │   │   ├── transform/              # Transformers
 │   │   │   ├── scripts.py         # Scripts analytics
+│   │   │   ├── plugin_engagement.py # 🆕 Plugin Engagement Score
 │   │   │   ├── gitlab.py          # GitLab analytics
 │   │   │   ├── projectsync.py     # Project sync analytics
 │   │   │   └── logs.py            # Logs analytics
@@ -103,6 +106,237 @@ airflow-dags/
 - `clean_html_safe()` - обработка HTML
 - `workdays_diff()` - подсчет рабочих дней
 - `get_project_solution()`, `get_project_stage()` - определение разделов/стадий
+
+---
+
+## 📊 Plugin Engagement Score - Детальное описание
+
+### 🎯 Назначение
+
+DAG `plugin_engagement_etl_dag` реализует комплексную метрику для объективной оценки использования плагинов **проектировщиками** (не BIM-пользователями). Метрика позволяет:
+
+- Выявить сотрудников с низкой вовлеченностью в использование плагинов
+- Оценить как разнообразие инструментария, так и интенсивность использования
+- Получить объективную картину для принятия решений об обучении и мотивации
+
+### 📐 Методология расчета
+
+#### 1. Исходные данные
+- **Monitoring**: логи запуска плагинов пользователями
+- **AD Users**: справочник пользователей с ФИО
+- **BIM_USERS**: список BIM-специалистов (исключаются из анализа)
+
+#### 2. Метрики на пользователя
+- **unique_plugins**: количество уникальных плагинов
+- **total_launches**: общее количество запусков всех плагинов
+
+#### 3. Нормализация Min-Max
+Приведение к диапазону [0, 1]:
+
+```
+normalized_value = (value - min_value) / (max_value - min_value)
+```
+
+Если все значения одинаковые → нормализованное значение = 0.5
+
+#### 4. Plugin Engagement Score
+Взвешенное среднее нормализованных метрик:
+
+```
+Score = w1 × unique_plugins_norm + w2 × total_launches_norm
+```
+
+**По умолчанию:** w1 = 0.5, w2 = 0.5 (сбалансированная оценка)
+
+### 📈 Интерпретация результатов
+
+| Диапазон оценки | Интерпретация | Рекомендации |
+|-----------------|---------------|--------------|
+| **0.7 - 1.0** | Высокая вовлеченность | Активное использование плагинов |
+| **0.4 - 0.7** | Умеренная вовлеченность | Стандартный уровень |
+| **0.0 - 0.4** | Низкая вовлеченность | Требуется обучение/мотивация |
+
+### 📋 Выходная таблица
+
+**Таблица:** `datalake.ext_plugin_engagement`
+
+| Колонка | Тип | Описание |
+|---------|-----|----------|
+| **day** | DATE | **Дата (конец дня)** |
+| user_name | TEXT | ФИО проектировщика |
+| unique_plugins | INTEGER | Кумулятивное кол-во уникальных плагинов (до конца дня) |
+| total_launches | INTEGER | Кумулятивное общее кол-во запусков (до конца дня) |
+| unique_plugins_norm | FLOAT | Нормализованное значение (0-1) в рамках дня |
+| total_launches_norm | FLOAT | Нормализованное значение (0-1) в рамках дня |
+| plugin_engagement_score | FLOAT | Итоговая оценка (0-1) в рамках дня |
+
+**Особенность:** Данные представлены как временные ряды - для каждого дня и каждого проектировщика рассчитывается **кумулятивная** метрика на конец этого дня.
+
+### 🔄 Процесс ETL
+
+```
+┌─────────────┐     ┌─────────────┐
+│ AD Users    │────▶│  Extract    │
+└─────────────┘     │  (parallel) │
+                    └──────┬──────┘
+┌─────────────┐            │
+│ Monitoring  │────────────┘
+└─────────────┘            │
+                           ▼
+                    ┌──────────────┐
+                    │  Transform   │
+                    │  - Фильтр    │
+                    │  - Агрегация │
+                    │  - Норма-ия  │
+                    │  - Score     │
+                    └──────┬───────┘
+                           ▼
+                    ┌──────────────┐
+                    │    Load      │
+                    │  (replace)   │
+                    └──────────────┘
+                           │
+                           ▼
+              datalake.ext_plugin_engagement
+```
+
+### ⚙️ Настройка весов
+
+Веса можно изменить в файле `plugin_engagement_etl_dag.py`:
+
+```python
+# Приоритет на разнообразие плагинов
+WEIGHT_UNIQUE_PLUGINS = 0.7
+WEIGHT_TOTAL_LAUNCHES = 0.3
+
+# Приоритет на интенсивность использования
+WEIGHT_UNIQUE_PLUGINS = 0.3
+WEIGHT_TOTAL_LAUNCHES = 0.7
+```
+
+**Важно:** сумма весов должна быть равна 1.0
+
+### 📝 Примеры использования результатов
+
+#### SQL: Топ-10 проектировщиков на последнюю дату
+
+```sql
+WITH last_day AS (
+    SELECT MAX(day) as max_day FROM datalake.ext_plugin_engagement
+)
+SELECT 
+    day,
+    user_name,
+    unique_plugins,
+    total_launches,
+    ROUND(plugin_engagement_score::numeric, 4) as score
+FROM datalake.ext_plugin_engagement
+WHERE day = (SELECT max_day FROM last_day)
+ORDER BY plugin_engagement_score DESC
+LIMIT 10;
+```
+
+#### SQL: Проектировщики, требующие внимания на последнюю дату (Score < 0.4)
+
+```sql
+WITH last_day AS (
+    SELECT MAX(day) as max_day FROM datalake.ext_plugin_engagement
+)
+SELECT 
+    day,
+    user_name,
+    unique_plugins,
+    total_launches,
+    ROUND(plugin_engagement_score::numeric, 4) as score
+FROM datalake.ext_plugin_engagement
+WHERE day = (SELECT max_day FROM last_day)
+  AND plugin_engagement_score < 0.4
+ORDER BY plugin_engagement_score ASC;
+```
+
+#### SQL: Распределение по уровням вовлеченности (последняя дата)
+
+```sql
+WITH last_day AS (
+    SELECT MAX(day) as max_day FROM datalake.ext_plugin_engagement
+)
+SELECT 
+    CASE 
+        WHEN plugin_engagement_score >= 0.7 THEN 'Высокая'
+        WHEN plugin_engagement_score >= 0.4 THEN 'Умеренная'
+        ELSE 'Низкая'
+    END as engagement_level,
+    COUNT(*) as designers_count,
+    ROUND(AVG(unique_plugins)::numeric, 1) as avg_plugins,
+    ROUND(AVG(total_launches)::numeric, 1) as avg_launches
+FROM datalake.ext_plugin_engagement
+WHERE day = (SELECT max_day FROM last_day)
+GROUP BY engagement_level
+ORDER BY 
+    CASE engagement_level
+        WHEN 'Высокая' THEN 1
+        WHEN 'Умеренная' THEN 2
+        WHEN 'Низкая' THEN 3
+    END;
+```
+
+#### SQL: Динамика вовлеченности проектировщика за последние 30 дней
+
+```sql
+SELECT 
+    day,
+    user_name,
+    unique_plugins,
+    total_launches,
+    ROUND(plugin_engagement_score::numeric, 4) as score
+FROM datalake.ext_plugin_engagement
+WHERE user_name = 'Иванов Иван Иванович'  -- замените на нужное ФИО
+  AND day >= CURRENT_DATE - INTERVAL '30 days'
+ORDER BY day DESC;
+```
+
+#### SQL: Рост вовлеченности - сравнение начала и конца периода
+
+```sql
+WITH first_last AS (
+    SELECT 
+        user_name,
+        MIN(day) as first_day,
+        MAX(day) as last_day
+    FROM datalake.ext_plugin_engagement
+    GROUP BY user_name
+),
+scores AS (
+    SELECT 
+        e1.user_name,
+        e1.day as first_day,
+        e1.plugin_engagement_score as first_score,
+        e2.day as last_day,
+        e2.plugin_engagement_score as last_score,
+        ROUND((e2.plugin_engagement_score - e1.plugin_engagement_score)::numeric, 4) as growth
+    FROM first_last fl
+    JOIN datalake.ext_plugin_engagement e1 
+        ON fl.user_name = e1.user_name AND fl.first_day = e1.day
+    JOIN datalake.ext_plugin_engagement e2 
+        ON fl.user_name = e2.user_name AND fl.last_day = e2.day
+)
+SELECT 
+    user_name,
+    first_day,
+    ROUND(first_score::numeric, 4) as first_score,
+    last_day,
+    ROUND(last_score::numeric, 4) as last_score,
+    growth,
+    CASE 
+        WHEN growth > 0.1 THEN '📈 Значительный рост'
+        WHEN growth > 0 THEN '↗️ Рост'
+        WHEN growth = 0 THEN '→ Стабильно'
+        WHEN growth > -0.1 THEN '↘️ Снижение'
+        ELSE '📉 Значительное снижение'
+    END as trend
+FROM scores
+ORDER BY growth DESC;
+```
 
 ---
 
@@ -172,6 +406,7 @@ pip install -r requirements.txt
 - datalake.ext_scripts_analytics_designers
 - datalake.ext_scripts_analytics_bim
 - datalake.ext_scripts_plugin
+- datalake.ext_plugin_engagement 🆕
 - datalake.ext_scripts_gitlab
 - datalake.ext_project_sync_designers
 - datalake.ext_project_sync_bim
@@ -229,7 +464,24 @@ tail -f $AIRFLOW_HOME/logs/scheduler/latest/*.log
 
 ## 📝 Версии и история
 
-**Текущая версия:** 1.1 (после рефакторинга 2025-10-23)
+**Текущая версия:** 1.3 (Plugin Engagement: исторические данные 2025-11-05)
+
+### Версия 1.3 - Plugin Engagement: Временные ряды (2025-11-05)
+- ✅ Добавлено поле `day` (дата) в таблицу результатов
+- ✅ Реализован **кумулятивный расчет** метрики на конец каждого дня
+- ✅ Поддержка исторических данных - все доступные дни из источника
+- ✅ Отслеживание динамики вовлеченности во времени
+- ✅ Обновлены примеры SQL запросов для работы с временными рядами
+- ✅ Добавлены запросы для анализа тренда и роста вовлеченности
+
+### Версия 1.2 - Plugin Engagement Score (2025-11-05)
+- ✅ Создан новый DAG `plugin_engagement_etl_dag.py`
+- ✅ Реализована метрика Plugin Engagement Score для оценки использования плагинов
+- ✅ Создан модуль трансформации `etl_pipelines/transform/plugin_engagement.py`
+- ✅ Методология: нормализация Min-Max + взвешенное среднее
+- ✅ Фильтрация проектировщиков (не BIM-пользователей)
+- ✅ Новая целевая таблица: `datalake.ext_plugin_engagement`
+- ✅ Запуск одновременно со `scripts_etl_dag` (@hourly)
 
 ### Версия 1.1 - Рефакторинг кодовой базы (2025-10-23)
 - ✅ Создан `dags/config.py` с централизованными константами
@@ -254,13 +506,13 @@ tail -f $AIRFLOW_HOME/logs/scheduler/latest/*.log
 
 | Метрика | Значение |
 |---------|----------|
-| Python файлов | 28 |
-| DAG файлов | 6 |
+| Python файлов | 30 |
+| DAG файлов | 7 |
 | Extract функций | 14 |
-| Transform функций | 6 |
+| Transform функций | 7 |
 | Load функций | 4 |
-| Строк кода | ~2100 |
-| Целевых таблиц | 9 |
+| Строк кода | ~2400 |
+| Целевых таблиц | 10 |
 | Источников данных | 4 (PostgreSQL, GitLab, SharePoint, Google Sheets) |
 
 ### Архитектурные особенности
@@ -299,5 +551,5 @@ tail -f $AIRFLOW_HOME/logs/scheduler/latest/*.log
 
 ---
 
-**Дата последнего обновления:** 2025-10-23
-**Версия:** 1.1
+**Дата последнего обновления:** 2025-11-05
+**Версия:** 1.3
