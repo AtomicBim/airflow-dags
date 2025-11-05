@@ -106,9 +106,13 @@ def transform_plugin_engagement(
     # 3. Определение уникальных пользователей из monitoring
     print("\n3. Определение активных пользователей плагинов...")
     
-    # Получаем уникальных пользователей, которые реально используют плагины
+    # Определяем колонки для join
+    # Варианты join: ad_user_id->id, username->username/login, user_display_name->name
+    print(f"   - Колонки в monitoring: {list(df_monitoring.columns)}")
+    print(f"   - Колонки в AD users: {list(df_ad.columns)}")
+    
+    # Попытка 1: ad_user_id -> id
     if 'ad_user_id' in df_monitoring.columns and 'id' in df_ad.columns:
-        # Объединяем monitoring с AD users для получения ФИО
         df_merged = df_monitoring.merge(
             df_ad[['id', 'name']],
             left_on='ad_user_id',
@@ -116,8 +120,41 @@ def transform_plugin_engagement(
             how='left'
         )
         df_merged.rename(columns={'name': 'user_name'}, inplace=True)
+        print(f"   - Join: ad_user_id <-> id")
+    
+    # Попытка 2: username -> username или login
+    elif 'username' in df_monitoring.columns:
+        ad_username_col = None
+        if 'username' in df_ad.columns:
+            ad_username_col = 'username'
+        elif 'login' in df_ad.columns:
+            ad_username_col = 'login'
+        
+        if ad_username_col and 'name' in df_ad.columns:
+            df_merged = df_monitoring.merge(
+                df_ad[[ad_username_col, 'name']],
+                left_on='username',
+                right_on=ad_username_col,
+                how='left'
+            )
+            df_merged.rename(columns={'name': 'user_name'}, inplace=True)
+            print(f"   - Join: username <-> {ad_username_col}")
+        else:
+            raise ValueError(f"Не найдена колонка username/login в AD users. Доступные: {list(df_ad.columns)}")
+    
+    # Попытка 3: user_display_name уже есть ФИО
+    elif 'user_display_name' in df_monitoring.columns:
+        # Используем user_display_name как есть
+        df_merged = df_monitoring.copy()
+        df_merged.rename(columns={'user_display_name': 'user_name'}, inplace=True)
+        print(f"   - Используется user_display_name напрямую (ФИО уже в мониторинге)")
+    
     else:
-        raise ValueError("Отсутствуют необходимые колонки для объединения данных")
+        raise ValueError(
+            f"Не найдены подходящие колонки для join.\n"
+            f"Monitoring: {list(df_monitoring.columns)}\n"
+            f"AD Users: {list(df_ad.columns)}"
+        )
     
     # Удаляем записи без ФИО (если есть)
     df_merged = df_merged.dropna(subset=['user_name'])
