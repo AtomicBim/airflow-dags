@@ -23,8 +23,8 @@ from config import BIM_USERS
 # w1 - вес для количества уникальных плагинов
 # w2 - вес для количества запусков
 # Сумма должна быть равна 1.0
-WEIGHT_UNIQUE_PLUGINS = 0.6
-WEIGHT_TOTAL_LAUNCHES = 0.4
+WEIGHT_UNIQUE_PLUGINS = 0.7
+WEIGHT_TOTAL_LAUNCHES = 0.3
 
 
 @dag(
