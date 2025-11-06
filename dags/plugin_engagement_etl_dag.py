@@ -75,6 +75,10 @@ WEIGHT_TOTAL_LAUNCHES = 0.3
     Таблица `datalake.ext_plugin_engagement` с колонками:
     - `day`: Дата (конец дня)
     - `user_name`: ФИО проектировщика
+    - `email`: Email пользователя (из AD)
+    - `company`: Компания (из AD)
+    - `department`: Отдел (из AD)
+    - `project_section`: Раздел проекта (из AD)
     - `unique_plugins`: Кумулятивное количество уникальных плагинов
     - `total_launches`: Кумулятивное количество запусков
     - `unique_plugins_norm`: Нормализованное значение (0-1) в рамках дня

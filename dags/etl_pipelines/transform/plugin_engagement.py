@@ -110,39 +110,67 @@ def transform_plugin_engagement(
     print(f"   - Колонки в monitoring: {list(df_monitoring.columns)}")
     print(f"   - Колонки в AD users: {list(df_ad.columns)}")
     
-    # Попытка 1: user_display_name уже есть ФИО (самый простой вариант)
-    if 'user_display_name' in df_monitoring.columns:
-        # Используем user_display_name как есть - там уже ФИО!
-        df_merged = df_monitoring.copy()
-        df_merged.rename(columns={'user_display_name': 'user_name'}, inplace=True)
-        print(f"   - Используется user_display_name напрямую (ФИО уже в мониторинге)")
+    # Определяем колонки AD для join (берем все нужные поля)
+    ad_columns_to_join = ['email', 'display_name', 'company', 'department', 'project_section']
+    # Проверяем какие колонки реально есть в df_ad
+    ad_columns_available = [col for col in ad_columns_to_join if col in df_ad.columns]
+    
+    print(f"   - Доступные колонки AD для join: {ad_columns_available}")
+    
+    # Попытка 1: username -> email (если username это email) - ОСНОВНОЙ способ
+    if 'username' in df_monitoring.columns and 'email' in df_ad.columns:
+        # Join с AD для получения всех дополнительных полей
+        df_merged = df_monitoring.merge(
+            df_ad[ad_columns_available],
+            left_on='username',
+            right_on='email',
+            how='left'
+        )
+        
+        # Используем display_name или user_display_name как основное ФИО
+        if 'display_name' in df_merged.columns:
+            # Если display_name из AD есть - используем его
+            df_merged['user_name'] = df_merged['display_name'].fillna(df_merged.get('user_display_name', ''))
+        elif 'user_display_name' in df_merged.columns:
+            # Иначе используем user_display_name из monitoring
+            df_merged['user_name'] = df_merged['user_display_name']
+        else:
+            raise ValueError("Нет колонки с ФИО пользователя")
+        
+        print(f"   - Join: username <-> email (получены поля: {ad_columns_available})")
     
     # Попытка 2: ad_user_id -> id (если есть связка по ID)
     elif 'ad_user_id' in df_monitoring.columns and 'id' in df_ad.columns:
-        name_col = 'name' if 'name' in df_ad.columns else 'display_name'
+        ad_cols_with_id = ['id'] + ad_columns_available
+        ad_cols_with_id = [col for col in ad_cols_with_id if col in df_ad.columns]
+        
         df_merged = df_monitoring.merge(
-            df_ad[['id', name_col]],
+            df_ad[ad_cols_with_id],
             left_on='ad_user_id',
             right_on='id',
             how='left'
         )
-        df_merged.rename(columns={name_col: 'user_name'}, inplace=True)
-        print(f"   - Join: ad_user_id <-> id (получаем {name_col})")
-    
-    # Попытка 3: username -> email (если username это email)
-    elif 'username' in df_monitoring.columns and 'email' in df_ad.columns:
-        name_col = 'display_name' if 'display_name' in df_ad.columns else 'name'
-        if name_col in df_ad.columns:
-            df_merged = df_monitoring.merge(
-                df_ad[['email', name_col]],
-                left_on='username',
-                right_on='email',
-                how='left'
-            )
-            df_merged.rename(columns={name_col: 'user_name'}, inplace=True)
-            print(f"   - Join: username <-> email (получаем {name_col})")
+        
+        # Определяем ФИО
+        if 'display_name' in df_merged.columns:
+            df_merged['user_name'] = df_merged['display_name']
+        elif 'name' in df_merged.columns:
+            df_merged['user_name'] = df_merged['name']
         else:
-            raise ValueError(f"Не найдена колонка с ФИО в AD users. Доступные: {list(df_ad.columns)}")
+            raise ValueError("Нет колонки с ФИО в AD users")
+        
+        print(f"   - Join: ad_user_id <-> id (получены поля: {ad_cols_with_id})")
+    
+    # Попытка 3: Fallback - используем только monitoring без join
+    elif 'user_display_name' in df_monitoring.columns:
+        df_merged = df_monitoring.copy()
+        df_merged['user_name'] = df_merged['user_display_name']
+        # Добавляем пустые колонки для недостающих полей
+        for col in ['email', 'company', 'department', 'project_section']:
+            if col not in df_merged.columns:
+                df_merged[col] = None
+        print(f"   - ВНИМАНИЕ: Join с AD не выполнен, используется только user_display_name")
+        print(f"   - Дополнительные поля (email, company, department, project_section) будут NULL")
     
     else:
         raise ValueError(
@@ -167,7 +195,8 @@ def transform_plugin_engagement(
     if df_designers.empty:
         print("   ВНИМАНИЕ: Нет данных по проектировщикам!")
         return pd.DataFrame(columns=[
-            'day', 'user_name', 'unique_plugins', 'total_launches',
+            'day', 'user_name', 'email', 'company', 'department', 'project_section',
+            'unique_plugins', 'total_launches',
             'unique_plugins_norm', 'total_launches_norm', 'plugin_engagement_score'
         ])
     
@@ -202,11 +231,22 @@ def transform_plugin_engagement(
         # Фильтруем данные до конца текущего дня включительно (без копирования)
         df_until_day = df_designers[df_designers['day'] <= current_day]
 
-        # Агрегация кумулятивных метрик
-        df_day_agg = df_until_day.groupby('user_name').agg(
-            unique_plugins=(plugin_column, 'nunique'),
-            total_launches=(plugin_column, 'count')
-        ).reset_index()
+        # Агрегация кумулятивных метрик + дополнительные поля из AD
+        agg_dict = {
+            plugin_column: [('unique_plugins', 'nunique'), ('total_launches', 'count')]
+        }
+        
+        # Добавляем дополнительные поля (берем первое значение, т.к. для одного user они одинаковые)
+        for field in ['email', 'company', 'department', 'project_section']:
+            if field in df_until_day.columns:
+                agg_dict[field] = ('first',)
+        
+        df_day_agg = df_until_day.groupby('user_name').agg(**{
+            'unique_plugins': (plugin_column, 'nunique'),
+            'total_launches': (plugin_column, 'count'),
+            **{field: (field, 'first') for field in ['email', 'company', 'department', 'project_section'] 
+               if field in df_until_day.columns}
+        }).reset_index()
         
         # Нормализация в рамках текущего дня
         df_day_agg['unique_plugins_norm'] = min_max_normalize(df_day_agg['unique_plugins'])
@@ -226,9 +266,14 @@ def transform_plugin_engagement(
     # Объединяем все дни
     df_final = pd.concat(daily_results, ignore_index=True)
     
-    # Переупорядочиваем колонки
-    df_final = df_final[['day', 'user_name', 'unique_plugins', 'total_launches',
-                         'unique_plugins_norm', 'total_launches_norm', 'plugin_engagement_score']]
+    # Переупорядочиваем колонки (основные + дополнительные поля из AD)
+    base_columns = ['day', 'user_name', 'email', 'company', 'department', 'project_section',
+                    'unique_plugins', 'total_launches',
+                    'unique_plugins_norm', 'total_launches_norm', 'plugin_engagement_score']
+    
+    # Берем только те колонки, которые реально есть
+    available_columns = [col for col in base_columns if col in df_final.columns]
+    df_final = df_final[available_columns]
     
     # Сортируем по дате и оценке
     df_final = df_final.sort_values(['day', 'plugin_engagement_score'], ascending=[True, False])

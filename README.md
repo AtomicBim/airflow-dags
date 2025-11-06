@@ -170,6 +170,10 @@ Score = w1 × unique_plugins_norm + w2 × total_launches_norm
 |---------|-----|----------|
 | **day** | DATE | **Дата (конец дня)** |
 | user_name | TEXT | ФИО проектировщика |
+| email | TEXT | Email пользователя (из AD) |
+| company | TEXT | Компания (из AD) |
+| department | TEXT | Отдел (из AD) |
+| project_section | TEXT | Раздел проекта (из AD) |
 | unique_plugins | INTEGER | Кумулятивное кол-во уникальных плагинов (до конца дня) |
 | total_launches | INTEGER | Кумулятивное общее кол-во запусков (до конца дня) |
 | unique_plugins_norm | FLOAT | Нормализованное значение (0-1) в рамках дня |
