@@ -117,8 +117,45 @@ def transform_plugin_engagement(
     
     print(f"   - Доступные колонки AD для join: {ad_columns_available}")
     
-    # Попытка 1: username -> email (если username это email) - ОСНОВНОЙ способ
-    if 'username' in df_monitoring.columns and 'email' in df_ad.columns:
+    # Попытка 1: user_display_name -> display_name (Join по ФИО) - ОСНОВНОЙ способ
+    if 'user_display_name' in df_monitoring.columns and 'display_name' in df_ad.columns:
+        # ДИАГНОСТИКА: проверяем формат ФИО
+        sample_monitoring_names = df_monitoring['user_display_name'].dropna().unique()[:5].tolist()
+        sample_ad_names = df_ad['display_name'].dropna().unique()[:5].tolist()
+        print(f"   - Примеры ФИО из monitoring: {sample_monitoring_names}")
+        print(f"   - Примеры ФИО из AD: {sample_ad_names}")
+        
+        # Join с AD по ФИО для получения всех дополнительных полей
+        df_merged = df_monitoring.merge(
+            df_ad[ad_columns_available],
+            left_on='user_display_name',
+            right_on='display_name',
+            how='left'
+        )
+        
+        # Используем user_display_name как основное ФИО (оно уже есть в monitoring)
+        df_merged['user_name'] = df_merged['user_display_name']
+        
+        # ДИАГНОСТИКА: сколько записей совпало
+        matched_count = df_merged['email'].notna().sum() if 'email' in df_merged.columns else 0
+        total_count = len(df_merged)
+        match_rate = (matched_count / total_count * 100) if total_count > 0 else 0
+        print(f"   - Join результат: {matched_count}/{total_count} ({match_rate:.1f}%) записей совпало по ФИО")
+        
+        if match_rate < 10:
+            print(f"   - ВНИМАНИЕ: Очень низкий процент совпадений!")
+            print(f"   - Возможно, ФИО в разных форматах")
+        
+        print(f"   - Join: user_display_name <-> display_name (получены поля: {ad_columns_available})")
+    
+    # Попытка 2: username -> email (если username это email)
+    elif 'username' in df_monitoring.columns and 'email' in df_ad.columns:
+        # ДИАГНОСТИКА: проверяем формат username
+        sample_usernames = df_monitoring['username'].dropna().head(5).tolist()
+        sample_emails = df_ad['email'].dropna().head(5).tolist()
+        print(f"   - Примеры username из monitoring: {sample_usernames}")
+        print(f"   - Примеры email из AD: {sample_emails}")
+        
         # Join с AD для получения всех дополнительных полей
         df_merged = df_monitoring.merge(
             df_ad[ad_columns_available],
@@ -127,15 +164,33 @@ def transform_plugin_engagement(
             how='left'
         )
         
-        # Используем display_name или user_display_name как основное ФИО
-        if 'display_name' in df_merged.columns:
-            # Если display_name из AD есть - используем его
-            df_merged['user_name'] = df_merged['display_name'].fillna(df_merged.get('user_display_name', ''))
-        elif 'user_display_name' in df_merged.columns:
-            # Иначе используем user_display_name из monitoring
+        # ДИАГНОСТИКА: сколько записей совпало
+        matched_count = df_merged['email'].notna().sum()
+        total_count = len(df_merged)
+        match_rate = (matched_count / total_count * 100) if total_count > 0 else 0
+        print(f"   - Join результат: {matched_count}/{total_count} ({match_rate:.1f}%) записей совпало")
+        
+        # Если совпадений мало - используем user_display_name для ФИО и добавляем поля вручную
+        if match_rate < 50:
+            print(f"   - ВНИМАНИЕ: Низкий процент совпадений при join!")
+            print(f"   - Используем user_display_name из monitoring для ФИО")
+            print(f"   - Дополнительные поля будут заполнены для совпавших записей")
+            
+            # Используем user_display_name из monitoring как основное ФИО
             df_merged['user_name'] = df_merged['user_display_name']
+            
+            # Заполняем отсутствующие поля для тех, кто не совпал
+            for col in ['email', 'company', 'department', 'project_section']:
+                if col not in df_merged.columns:
+                    df_merged[col] = None
         else:
-            raise ValueError("Нет колонки с ФИО пользователя")
+            # Используем display_name из AD или user_display_name как основное ФИО
+            if 'display_name' in df_merged.columns:
+                df_merged['user_name'] = df_merged['display_name'].fillna(df_merged.get('user_display_name', ''))
+            elif 'user_display_name' in df_merged.columns:
+                df_merged['user_name'] = df_merged['user_display_name']
+            else:
+                raise ValueError("Нет колонки с ФИО пользователя")
         
         print(f"   - Join: username <-> email (получены поля: {ad_columns_available})")
     
