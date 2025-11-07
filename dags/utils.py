@@ -396,12 +396,12 @@ def get_project_solution(project_name: str, object_name: str) -> str:
         for pattern, section in SECTION_MAP_KORTROS.items():
             if pattern in name:
                 return section
-        return "НД"
+        return "Нет данных"
     else:
         for pattern, section in SECTION_MAP_RUS.items():
             if pattern in name:
                 return section
-        return "НД"
+        return "Нет данных"
 
 
 def get_project_stage(project_name: str, object_name: str) -> str:
@@ -413,7 +413,7 @@ def get_project_stage(project_name: str, object_name: str) -> str:
         object_name: Название объекта (Кортрос, ИНПРО и т.д.)
 
     Returns:
-        Код стадии ('П', 'Р', 'ЭП' и т.д.) или 'НД' если не определена
+        Код стадии ('П', 'Р', 'ЭП' и т.д.) или 'Нет данных' если не определена
 
     Examples:
         >>> get_project_stage('K01_AR_P_2024', 'Кортрос')
@@ -430,10 +430,10 @@ def get_project_stage(project_name: str, object_name: str) -> str:
             if (mode == "contains" and pattern in name) or \
                (mode == "endswith" and name.endswith(pattern)):
                 return stage
-        return "НД"
+        return "Нет данных"
     else:
         for (mode, pattern), stage in STAGE_MAP_RUS.items():
             if (mode == "contains" and pattern in name) or \
                (mode == "endswith" and name.endswith(pattern)):
                 return stage
-        return "НД"
+        return "Нет данных"
