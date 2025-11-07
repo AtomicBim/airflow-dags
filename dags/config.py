@@ -130,8 +130,6 @@ SECTION_MAP_KORTROS = {
     "_OV": "ОВ",
     "_AK": "АК",
     "_SS": "СС",
-    "_P": "П",
-    "_R": "Р",
     "_TS": "ТС",
     "_AP": "АП"
 }
@@ -166,7 +164,7 @@ STAGE_MAP_KORTROS = {
     ("contains", "_R_"): "Р",
     ("contains", "_AGK_"): "ГК",
     ("endswith", "_P"): "П",
-    ("endswith", "_R"): "Р",
+    ("endswith", "_RD"): "Р",
     ("endswith", "_AGK"): "ГК"
 }
 
