@@ -148,6 +148,7 @@ SECTION_MAP_RUS = {
     "_КР": "КР",
     "_КМ": "КМ",
     "_АП": "АП",
+    "_ПП": "ПП",
     "_ПТ": "ПТ",
     "_СС": "СС",
     "_ПБ": "ПБ",
@@ -162,6 +163,7 @@ SECTION_MAP_RUS = {
 STAGE_MAP_KORTROS = {
     ("contains", "_P_"): "П",
     ("contains", "_R_"): "Р",
+    ("contains", "_RD_"): "Р",
     ("contains", "_AGK_"): "ГК",
     ("endswith", "_P"): "П",
     ("endswith", "_RD"): "Р",
