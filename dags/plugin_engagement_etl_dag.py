@@ -30,7 +30,7 @@ WEIGHT_TOTAL_LAUNCHES = 0.3
 @dag(
     dag_id="plugin_engagement_etl_dag",
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
-    schedule="@hourly",
+    schedule="7 * * * *", # каждый час в :07
     catchup=False,
     tags=["plugins", "etl", "analytics", "engagement"],
     doc_md="""
