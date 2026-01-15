@@ -1,8 +1,7 @@
 """
 Transform модуль для Scripts Analytics pipeline.
-Объединяет данные из monitoring, plugins, gitlab для аналитики скриптов.
+Объединяет данные из monitoring, plugins для аналитики скриптов.
 """
-import json
 import pandas as pd
 import numpy as np
 from typing import Tuple
@@ -17,7 +16,6 @@ def transform_scripts_analytics(
     plugin_path: str,
     monitoring_path: str,
     plugin_development_stage_path: str,
-    gitlab_path: str,
     **context
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
@@ -28,7 +26,6 @@ def transform_scripts_analytics(
         plugin_path: Путь к CSV с данными плагинов
         monitoring_path: Путь к CSV с данными мониторинга
         plugin_development_stage_path: Путь к CSV со стадиями разработки
-        gitlab_path: Путь к JSON с данными GitLab
 
     Returns:
         Tuple из трех DataFrames: (designers, bim, plugin)
@@ -38,10 +35,6 @@ def transform_scripts_analytics(
     df_plugin = pd.read_csv(plugin_path)
     df_plugin_development_stage = pd.read_csv(plugin_development_stage_path)
     df_monitoring = pd.read_csv(monitoring_path)
-
-    with open(gitlab_path, encoding='utf-8') as f:
-        gitlab = json.load(f)
-    df_gitlab = pd.json_normalize(gitlab)
 
     # === Трансформация monitoring ===
     df_monitoring['short_project_name'] = df_monitoring['project_name'].astype(str).apply(extract_short_name)

@@ -1,6 +1,6 @@
 """
 DAG для Scripts Analytics ETL pipeline.
-Комплексный pipeline: объединяет данные из monitoring, plugins, gitlab.
+Комплексный pipeline: объединяет данные из monitoring, plugins.
 """
 from __future__ import annotations
 
@@ -10,10 +10,9 @@ from pathlib import Path
 
 from airflow.decorators import dag, task
 from airflow.models.variable import Variable
-from airflow.hooks.base import BaseHook
 
 # Импорт модульных функций
-from etl_pipelines.extract import pluginsdb, gitlab as extract_gitlab
+from etl_pipelines.extract import pluginsdb
 from etl_pipelines.transform import scripts as transform_scripts
 from etl_pipelines.load import datalake
 from common_tasks import extract_plugins_task
@@ -37,7 +36,6 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
     ## Процесс:
     - Извлекает monitoring, plugins, development_stage, AD users из pluginsdb
-    - Извлекает статистику LOC из GitLab
     - Трансформирует и объединяет все данные
     - Загружает результат в datalake:
       - ext_scripts_analytics_designers
@@ -79,19 +77,6 @@ def scripts_etl():
             output_path=output_path
         )
 
-    @task
-    def extract_gitlab_loc() -> str:
-        """Извлекает статистику LOC из GitLab проектов."""
-        # Получаем connection внутри task
-        gitlab_conn = BaseHook.get_connection("gitlab_api")
-
-        output_path = str(DATA_ROOT / "gitlab_export_lines.json")
-        return extract_gitlab.extract_gitlab_lines(
-            gitlab_url=gitlab_conn.host,
-            gitlab_token=gitlab_conn.password,
-            output_path=output_path,
-            max_workers=8
-        )
 
     # === Transform task (ждет все extract) ===
 
@@ -100,16 +85,14 @@ def scripts_etl():
         ad_path: str,
         plugin_path: str,
         monitoring_path: str,
-        plugin_development_stage_path: str,
-        gitlab_path: str
+        plugin_development_stage_path: str
     ) -> dict:
         """Трансформирует все данные для scripts analytics."""
         df_designers, df_bim, df_plugin = transform_scripts.transform_scripts_analytics(
             ad_path=ad_path,
             plugin_path=plugin_path,
             monitoring_path=monitoring_path,
-            plugin_development_stage_path=plugin_development_stage_path,
-            gitlab_path=gitlab_path
+            plugin_development_stage_path=plugin_development_stage_path
         )
 
         # Сохраняем DataFrames во временные файлы
@@ -175,7 +158,6 @@ def scripts_etl():
     plugin_csv = extract_plugins_task(output_path=str(DATA_ROOT / "tim_export_plugin.csv"))
     monitoring_csv = extract_monitoring()
     dev_stage_csv = extract_development_stage()
-    gitlab_json = extract_gitlab_loc()
 
     # Transform ждет все extract
     transformed_paths = transform_scripts_data(
@@ -183,7 +165,6 @@ def scripts_etl():
         plugin_path=plugin_csv,
         monitoring_path=monitoring_csv,
         plugin_development_stage_path=dev_stage_csv,
-        gitlab_path=gitlab_json
     )
 
     # Load задачи запускаются параллельно после transform
