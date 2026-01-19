@@ -31,8 +31,7 @@ def transform_logs_analytics(
     # === Удаление ненужных столбцов ===
     columns_to_drop = [
         'plugin_version', 'username',
-        'project_name', 'message', 'additional_message',
-        'exception_message', 'exception_stack_trace', 'class_name',
+        'project_name', 'additional_message',
         'program_name', 'program_version'
     ]
     df_logs.drop(columns=[col for col in columns_to_drop if col in df_logs.columns], inplace=True)
