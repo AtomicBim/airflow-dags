@@ -55,8 +55,8 @@ x-airflow-common:
     &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: CeleryExecutor
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
-    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@airflow-db/airflow
     AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
     AIRFLOW__CORE__FERNET_KEY: 'yOITqKKjs1TvS_fDinlEzkvfQUVO-ZGNI0HETZLU52k='
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
@@ -75,18 +75,20 @@ x-airflow-common:
   volumes:
     - ./dags:/opt/airflow/dags
     - ./config:/opt/airflow/config
-    - /home/corpadmin/data/airflow/logs:/opt/airflow/logs
-    - /home/corpadmin/data/airflow/data:/opt/airflow/data
+    - /home/corpadm/data/airflow/logs:/opt/airflow/logs
+    - /home/corpadm/data/airflow/data:/opt/airflow/data
+  networks:
+    - ai_network
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
     redis:
       condition: service_healthy
-    postgres:
+    airflow-db:
       condition: service_healthy
 
 services:
-  postgres:
+  airflow-db:
     image: mirror.gcr.io/library/postgres:13
     environment:
       POSTGRES_USER: airflow
@@ -94,14 +96,16 @@ services:
       POSTGRES_DB: airflow
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
-    ports:
-      - 15440:5432
+    #  ports:
+    #  - 15440:5432
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 10s
       retries: 5
       start_period: 5s
     restart: always
+    networks:
+    - ai_network
 
   redis:
     # Redis is limited to 7.2-bookworm due to licencing change
@@ -116,12 +120,14 @@ services:
       retries: 50
       start_period: 30s
     restart: always
+    networks:
+      - ai_network
 
   airflow-apiserver:
     <<: *airflow-common
     command: api-server
-    ports:
-      - "10081:8080"
+    #ports:
+    #  - "10081:8080"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
       interval: 30s
@@ -129,6 +135,8 @@ services:
       retries: 5
       start_period: 30s
     restart: always
+    networks:
+      - ai_network
     depends_on:
       <<: *airflow-common-depends-on
       airflow-init:
@@ -144,6 +152,8 @@ services:
       retries: 5
       start_period: 30s
     restart: always
+    networks:
+      - ai_network
     depends_on:
       <<: *airflow-common-depends-on
       airflow-init:
@@ -159,6 +169,8 @@ services:
       retries: 5
       start_period: 30s
     restart: always
+    networks:
+      - ai_network
     depends_on:
       <<: *airflow-common-depends-on
       airflow-init:
@@ -182,6 +194,8 @@ services:
       # See https://airflow.apache.org/docs/docker-stack/entrypoint.html#signal-propagation
       DUMB_INIT_SETSID: "0"
     restart: always
+    networks:
+      - ai_network
     depends_on:
       <<: *airflow-common-depends-on
       airflow-apiserver:
@@ -199,6 +213,8 @@ services:
       retries: 5
       start_period: 30s
     restart: always
+    networks:
+      - ai_network
     depends_on:
       <<: *airflow-common-depends-on
       airflow-init:
@@ -295,6 +311,8 @@ services:
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
       _PIP_ADDITIONAL_REQUIREMENTS: ''
     user: "0:0"
+    networks:
+      - ai_network
 
   airflow-cli:
     <<: *airflow-common
@@ -310,6 +328,8 @@ services:
       - airflow
     depends_on:
       <<: *airflow-common-depends-on
+    networks:
+      - ai_network
 
   # You can enable flower by adding "--profile flower" option e.g. docker-compose --profile flower up
   # or by explicitly targeted on the command line e.g. docker-compose up flower.
@@ -319,8 +339,8 @@ services:
     command: celery flower
     profiles:
       - flower
-    ports:
-      - "5555:5555"
+    #ports:
+    #  - "5555:5555"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:5555/"]
       interval: 30s
@@ -328,6 +348,8 @@ services:
       retries: 5
       start_period: 30s
     restart: always
+    networks:
+      - ai_network
     depends_on:
       <<: *airflow-common-depends-on
       airflow-init:
@@ -335,3 +357,6 @@ services:
 
 volumes:
   postgres-db-volume:
+networks:
+  ai_network:
+    external: true
