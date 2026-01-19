@@ -19,7 +19,7 @@ def extract_ad_users(postgres_conn_id: str, output_path: str, **context) -> str:
 
     return output_path
 
-
+ 
 def extract_plugins(postgres_conn_id: str, output_path: str, **context) -> str:
     """Экспортирует таблицу plugins.plugin из pluginsdb."""
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
@@ -87,4 +87,40 @@ def extract_logs(postgres_conn_id: str, output_path: str, **context) -> str:
     df.to_csv(output_path, index=False, encoding='utf-8')
     print(f"Экспортировано {len(df)} записей логов в {output_path}")
 
+    return output_path
+
+
+def extract_added_incremental(
+    postgres_conn_id: str, 
+    output_path: str, 
+    last_date: str = None, 
+    **context
+) -> str:
+    """
+    Экспортирует таблицу elements.added_element с инкрементальной выгрузкой по дате.
+    
+    Args:
+        postgres_conn_id: ID Airflow connection
+        output_path: Путь для CSV
+        last_date: Дата последней загрузки в формате 'YYYY-MM-DD' (None = полная выгрузка)
+    
+    Returns:
+        Путь к CSV файлу
+    """
+    hook = PostgresHook(postgres_conn_id=postgres_conn_id)
+    conn = hook.get_conn()
+    
+    if last_date:
+        sql = f"SELECT * FROM elements.added_element WHERE date > '{last_date}' ORDER BY date"
+        print(f"Инкрементальная выгрузка: date > '{last_date}'")
+    else:
+        sql = 'SELECT * FROM elements.added_element ORDER BY date'
+        print("Полная выгрузка (первый запуск)")
+    
+    df = pd.read_sql(sql, conn)
+    conn.close()
+    
+    df.to_csv(output_path, index=False, encoding='utf-8')
+    print(f"Экспортировано {len(df)} записей added_element в {output_path}")
+    
     return output_path

@@ -7,8 +7,8 @@ import numpy as np
 from typing import Tuple
 
 # Импорт из централизованной конфигурации и утилит
-from config import BIM_USERS
-from utils import extract_short_name
+from common.config import BIM_USERS
+from common.utils import extract_short_name
 
 
 def transform_scripts_analytics(

@@ -6,7 +6,7 @@ import pandas as pd
 from typing import Tuple
 
 # Импорт из централизованной конфигурации
-from config import BIM_USERS
+from common.config import BIM_USERS
 
 
 def transform_logs_analytics(

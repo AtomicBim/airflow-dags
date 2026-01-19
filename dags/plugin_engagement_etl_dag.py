@@ -17,7 +17,7 @@ from etl_pipelines.transform import plugin_engagement as transform_engagement
 from etl_pipelines.load import datalake
 
 # Импорт конфигурации
-from config import BIM_USERS
+from common.config import BIM_USERS
 
 # Весовые коэффициенты для расчета метрики
 # w1 - вес для количества уникальных плагинов

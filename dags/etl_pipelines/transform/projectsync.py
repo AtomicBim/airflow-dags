@@ -7,8 +7,8 @@ import numpy as np
 from typing import Tuple
 
 # Импорт из централизованной конфигурации и утилит
-from config import BIM_USERS
-from utils import extract_short_name, extract_file_storage_name, get_project_solution, get_project_stage
+from common.config import BIM_USERS
+from common.utils import extract_short_name, extract_file_storage_name, get_project_solution, get_project_stage
 
 
 def transform_projectsync_analytics(

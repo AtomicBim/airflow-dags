@@ -100,7 +100,7 @@ def get_project_solution(project_name: str, object_name: str) -> str:
         >>> get_project_solution('Проект_КР_2024', 'ИНПРО')
         'КР'
     """
-    from config import SECTION_MAP_KORTROS, SECTION_MAP_RUS
+    from common.config import SECTION_MAP_KORTROS, SECTION_MAP_RUS
 
     name = str(project_name)
 
@@ -133,7 +133,7 @@ def get_project_stage(project_name: str, object_name: str) -> str:
         >>> get_project_stage('Проект_АР_Р_2024', 'ИНПРО')
         'Р'
     """
-    from config import STAGE_MAP_KORTROS, STAGE_MAP_RUS
+    from common.config import STAGE_MAP_KORTROS, STAGE_MAP_RUS
 
     name = str(project_name)
 

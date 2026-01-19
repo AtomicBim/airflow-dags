@@ -15,7 +15,7 @@ from airflow.models.variable import Variable
 from etl_pipelines.extract import pluginsdb
 from etl_pipelines.transform import scripts as transform_scripts
 from etl_pipelines.load import datalake
-from common_tasks import extract_plugins_task
+from common.common_tasks import extract_plugins_task
 
 
 # Переменные Airflow
