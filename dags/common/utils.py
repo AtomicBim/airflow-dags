@@ -43,6 +43,32 @@ def extract_short_name(name: str) -> str:
     return '_'.join(parts[:2]) if len(parts) >= 2 else name
 
 
+def extract_short_project_name(name: str) -> str:
+    """
+    Извлекает название проекта БЕЗ последнего блока по '_'.
+
+    Args:
+        name: Полное название проекта (например, 'K01_AR_2024_vaskov')
+
+    Returns:
+        Название без последней части (например, 'K01_AR_2024')
+
+    Examples:
+        >>> extract_short_project_name('K01_AR_2024_vaskov')
+        'K01_AR_2024'
+        >>> extract_short_project_name('K01_AR')
+        'K01'
+        >>> extract_short_project_name('simple')
+        'simple'
+    """
+    if not isinstance(name, str) or not name:
+        return name
+    parts = name.split('_')
+    if len(parts) <= 1:
+        return name
+    return '_'.join(parts[:-1])
+
+
 def extract_file_storage_name(row: pd.Series) -> str:
     """
     Извлекает название файлового хранилища из project_name.

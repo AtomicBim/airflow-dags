@@ -8,7 +8,13 @@ from typing import Tuple, Optional
 
 # Импорт из централизованной конфигурации и утилит
 from common.config import BIM_USERS
-from common.utils import get_object_name, get_project_solution, get_project_stage
+from common.utils import (
+    get_object_name, 
+    get_project_solution, 
+    get_project_stage, 
+    extract_short_name,
+    extract_short_project_name
+)
 
 
 # Маски для классификации транзакций Revit
@@ -72,24 +78,6 @@ TRANSACTION_CATEGORIES = {
 #    Все остальные транзакции, не попавшие в категории выше.
 #    Внутренние операции Revit, служебные процессы.
 # ============================================================================
-
-
-def extract_short_project_name(name: str) -> str:
-    """
-    Извлекает короткое название проекта БЕЗ последнего блока по '_'.
-    
-    Args:
-        name: Полное название проекта (например, 'K01_AR_2024_vaskov')
-    
-    Returns:
-        Название без последней части (например, 'K01_AR_2024')
-    """
-    if not isinstance(name, str) or not name:
-        return name
-    parts = name.split('_')
-    if len(parts) <= 1:
-        return name
-    return '_'.join(parts[:-1])
 
 
 def classify_transaction(name: str) -> Tuple[str, bool]:
@@ -247,9 +235,10 @@ def transform_added_elements(
     matched = df['user_name'].notna().sum()
     print(f"   - Совпало: {matched}/{len(df)} ({matched/len(df)*100:.1f}%)")
     
-    # 3. Короткое название проекта (без последнего блока)
-    print("\n3. Создание short_project_name...")
-    df['short_project_name'] = df['project_name'].apply(extract_short_project_name)
+    # 3. Названия проекта: короткое и file_storage
+    print("\n3. Создание short_project_name и file_storage_name...")
+    df['short_project_name'] = df['project_name'].apply(extract_short_name)  # K01_AR (первые 2 части)
+    df['file_storage_name'] = df['project_name'].apply(extract_short_project_name)  # K01_AR_2024 (без последней части)
     
     # 4. Определение объекта, раздела и стадии проекта
     print("\n4. Определение объекта, раздела и стадии...")
@@ -361,6 +350,7 @@ def transform_added_elements(
         'date',
         'user_name',
         'short_project_name',
+        'file_storage_name',
         'object_name',
         'project_solution_name',
         'project_stage_name',
