@@ -4,14 +4,19 @@ Transform модуль для Added Elements pipeline.
 """
 import pandas as pd
 import re
-from typing import Tuple
+from typing import Tuple, Optional
 
-# Импорт из централизованной конфигурации
+# Импорт из централизованной конфигурации и утилит
 from common.config import BIM_USERS
+from common.utils import get_object_name, get_project_solution, get_project_stage
 
 
 # Маски для классификации транзакций Revit
 PLUGIN_PATTERN = r'modplus|mpd|mpr|mp:|аск:|ack:|diroots|paramanager|microdesk|dynamo|bim:|pris'
+
+# Порог неактивности для определения новой сессии (в секундах)
+# Если разрыв между транзакциями > SESSION_GAP_SECONDS — считаем началом новой сессии
+SESSION_GAP_SECONDS = 900  # 15 минут
 
 TRANSACTION_CATEGORIES = {
     # Вывод данных из модели
@@ -129,9 +134,78 @@ def count_elements(element_ids: str) -> int:
     return len([e for e in elements if e.strip()])
 
 
+def _fetch_last_user_transactions(
+    postgres_conn_id: str,
+    min_date: pd.Timestamp,
+    users: list
+) -> Optional[pd.DataFrame]:
+    """
+    Подгружает последнюю транзакцию каждого пользователя из datalake.
+    Используется для корректного расчёта time_since_prev_sec на границе инкрементальных порций.
+    
+    Args:
+        postgres_conn_id: ID Airflow connection для PostgreSQL
+        min_date: Минимальная дата из новой порции данных
+        users: Список пользователей из новой порции
+    
+    Returns:
+        DataFrame с последними транзакциями или None если ошибка/пусто
+    """
+    from airflow.providers.postgres.hooks.postgres import PostgresHook
+    
+    try:
+        hook = PostgresHook(postgres_conn_id=postgres_conn_id)
+        conn = hook.get_conn()
+        
+        # Форматируем дату для SQL
+        min_date_str = min_date.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Форматируем список пользователей для SQL IN clause
+        users_escaped = [u.replace("'", "''") for u in users if u]
+        users_str = "', '".join(users_escaped)
+        
+        # Подгружаем последнюю транзакцию каждого пользователя ДО min_date
+        # Объединяем обе таблицы (designers и bim)
+        sql = f"""
+            WITH all_data AS (
+                SELECT "date", "user_name"
+                FROM datalake.ext_added_elements_designers
+                WHERE "date" < '{min_date_str}'
+                  AND "user_name" IN ('{users_str}')
+                UNION ALL
+                SELECT "date", "user_name"
+                FROM datalake.ext_added_elements_bim
+                WHERE "date" < '{min_date_str}'
+                  AND "user_name" IN ('{users_str}')
+            ),
+            ranked AS (
+                SELECT "date", "user_name",
+                       ROW_NUMBER() OVER (PARTITION BY "user_name" ORDER BY "date" DESC) as rn
+                FROM all_data
+            )
+            SELECT "date" as prev_date, "user_name"
+            FROM ranked 
+            WHERE rn = 1
+        """
+        
+        df_prev = pd.read_sql(sql, conn)
+        conn.close()
+        
+        if df_prev.empty:
+            return None
+        
+        df_prev['prev_date'] = pd.to_datetime(df_prev['prev_date'])
+        return df_prev
+        
+    except Exception as e:
+        print(f"   - Не удалось подгрузить предыдущие транзакции: {e}")
+        return None
+
+
 def transform_added_elements(
     ad_path: str,
     added_path: str,
+    postgres_conn_id: Optional[str] = None,
     **context
 ) -> pd.DataFrame:
     """
@@ -140,6 +214,9 @@ def transform_added_elements(
     Args:
         ad_path: Путь к CSV с данными AD пользователей
         added_path: Путь к CSV с данными added_element
+        postgres_conn_id: ID Airflow connection для подгрузки предыдущих транзакций из datalake.
+                         Если указан, интервалы времени рассчитываются с учётом данных из datalake
+                         (для корректной работы при инкрементальной загрузке).
     
     Returns:
         DataFrame с трансформированными данными
@@ -174,14 +251,28 @@ def transform_added_elements(
     print("\n3. Создание short_project_name...")
     df['short_project_name'] = df['project_name'].apply(extract_short_project_name)
     
-    # 4. Обработка даты
-    print("\n4. Обработка даты...")
+    # 4. Определение объекта, раздела и стадии проекта
+    print("\n4. Определение объекта, раздела и стадии...")
+    df['object_name'] = df['project_name'].apply(get_object_name)
+    df['project_solution_name'] = df.apply(
+        lambda row: get_project_solution(row['project_name'], row['object_name']), axis=1
+    )
+    df['project_stage_name'] = df.apply(
+        lambda row: get_project_stage(row['project_name'], row['object_name']), axis=1
+    )
+    
+    print(f"   - Объекты: {df['object_name'].value_counts().to_dict()}")
+    print(f"   - Разделы: {df['project_solution_name'].value_counts().head(5).to_dict()}")
+    print(f"   - Стадии: {df['project_stage_name'].value_counts().to_dict()}")
+    
+    # 5. Обработка даты
+    print("\n5. Обработка даты...")
     df['date'] = pd.to_datetime(df['date'], errors='coerce')
     
     print(f"   - Диапазон дат: {df['date'].min()} - {df['date'].max()}")
     
-    # 5. Классификация транзакций
-    print("\n5. Классификация транзакций...")
+    # 6. Классификация транзакций
+    print("\n6. Классификация транзакций...")
     classifications = df['transaction_name'].apply(classify_transaction)
     df['class'] = classifications.apply(lambda x: x[0])
     df['is_plugin'] = classifications.apply(lambda x: x[1])
@@ -189,28 +280,98 @@ def transform_added_elements(
     print(f"   - Категории: {df['class'].value_counts().to_dict()}")
     print(f"   - Плагины: {df['is_plugin'].sum()} записей")
     
-    # 6. Подсчёт количества элементов
-    print("\n6. Подсчёт элементов...")
+    # 7. Подсчёт количества элементов
+    print("\n7. Подсчёт элементов...")
     df['elements_count'] = df['element_ids'].apply(count_elements)
     
     print(f"   - Всего элементов: {df['elements_count'].sum()}")
     print(f"   - Среднее на запись: {df['elements_count'].mean():.2f}")
     
-    # 7. Классификация BIM/designers
-    print("\n7. Классификация пользователей...")
+    # 8. Классификация BIM/designers
+    print("\n8. Классификация пользователей...")
     df['is_bim'] = df['user_name'].isin(BIM_USERS)
     
-    # 8. Формируем итоговый DataFrame
+    # 9. Расчёт времени между транзакциями (в пределах пользователя и дня)
+    print("\n9. Расчёт времени между транзакциями...")
+    
+    # Сортируем по пользователю и времени
+    df = df.sort_values(['user_name', 'date'])
+    
+    # Добавляем колонку с датой (без времени) для группировки по дню
+    df['date_only'] = df['date'].dt.date
+    
+    # Время до предыдущей транзакции в секундах (в пределах пользователя и дня)
+    df['time_since_prev_sec'] = df.groupby(['user_name', 'date_only'])['date'].diff().dt.total_seconds()
+    
+    # Подгружаем последние транзакции из datalake для корректного расчёта на границе порций
+    if postgres_conn_id:
+        min_date = df['date'].min()
+        users = df['user_name'].dropna().unique().tolist()
+        
+        print(f"   - Подгрузка предыдущих транзакций из datalake (до {min_date})...")
+        df_prev = _fetch_last_user_transactions(postgres_conn_id, min_date, users)
+        
+        if df_prev is not None and not df_prev.empty:
+            print(f"   - Найдено {len(df_prev)} предыдущих транзакций")
+            
+            # Находим первые транзакции каждого пользователя за каждый день (где time_since_prev_sec = NaN)
+            first_trans_mask = df['time_since_prev_sec'].isna()
+            
+            if first_trans_mask.any():
+                # Для первых транзакций дня подставляем интервал от последней транзакции из datalake
+                df_first = df[first_trans_mask][['user_name', 'date', 'date_only']].copy()
+                df_first = df_first.merge(df_prev, on='user_name', how='left')
+                
+                # Рассчитываем интервал от предыдущей транзакции из datalake
+                # Только если prev_date в тот же день
+                df_first['prev_date_only'] = df_first['prev_date'].dt.date
+                same_day_mask = df_first['date_only'] == df_first['prev_date_only']
+                
+                df_first.loc[same_day_mask, 'corrected_interval'] = (
+                    df_first.loc[same_day_mask, 'date'] - df_first.loc[same_day_mask, 'prev_date']
+                ).dt.total_seconds()
+                
+                # Обновляем интервалы в основном DataFrame
+                corrected_count = 0
+                for idx, row in df_first.iterrows():
+                    if pd.notna(row.get('corrected_interval')):
+                        df.loc[idx, 'time_since_prev_sec'] = row['corrected_interval']
+                        corrected_count += 1
+                
+                print(f"   - Скорректировано интервалов: {corrected_count}")
+    
+    # Первая транзакция дня (без предыдущей в datalake) = NaN, заполняем 0
+    df['time_since_prev_sec'] = df['time_since_prev_sec'].fillna(0)
+    
+    # Флаг "начало сессии" если разрыв > SESSION_GAP_SECONDS или первая транзакция дня
+    df['is_session_start'] = (df['time_since_prev_sec'] > SESSION_GAP_SECONDS) | (df['time_since_prev_sec'] == 0)
+    
+    # Статистика по интервалам (исключая нулевые - первые транзакции дня)
+    active_intervals = df[df['time_since_prev_sec'] > 0]['time_since_prev_sec']
+    if len(active_intervals) > 0:
+        print(f"   - Средний интервал: {active_intervals.mean():.1f} сек")
+        print(f"   - Медианный интервал: {active_intervals.median():.1f} сек")
+    print(f"   - Сессий (разрыв > {SESSION_GAP_SECONDS} сек): {df['is_session_start'].sum()}")
+    
+    # Убираем вспомогательную колонку
+    df.drop(columns=['date_only'], inplace=True)
+    
+    # 10. Формируем итоговый DataFrame
     result_columns = [
         'date',
         'user_name',
         'short_project_name',
+        'object_name',
+        'project_solution_name',
+        'project_stage_name',
         'program_version',
         'transaction_name',
         'class',
         'is_plugin',
         'elements_count',
-        'is_bim'
+        'is_bim',
+        'time_since_prev_sec',
+        'is_session_start'
     ]
     
     # Берём только существующие колонки

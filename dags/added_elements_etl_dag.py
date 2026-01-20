@@ -103,10 +103,12 @@ def added_elements_etl():
                 "is_empty": True
             }
         
-        # Трансформация
+        # Трансформация с подгрузкой предыдущих транзакций из datalake
+        # для корректного расчёта time_since_prev_sec на границе инкрементальных порций
         df_transformed = transform_added.transform_added_elements(
             ad_path=ad_path,
-            added_path=added_path
+            added_path=added_path,
+            postgres_conn_id="tim_db_postgres"
         )
         
         # Получаем max_date из трансформированных данных

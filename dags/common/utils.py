@@ -80,8 +80,40 @@ def extract_file_storage_name(row: pd.Series) -> str:
 
 
 # ============================================================================
-# Функции определения разделов и стадий проектов
+# Функции определения объектов, разделов и стадий проектов
 # ============================================================================
+
+def get_object_name(project_name: str) -> str:
+    """
+    Определяет название объекта по имени проекта.
+
+    Args:
+        project_name: Название проекта
+
+    Returns:
+        Название объекта ('АТОМ', 'Кортрос', 'ИНПРО', 'Ялта' и т.д.)
+
+    Examples:
+        >>> get_object_name('K01_AR_2024')
+        'Кортрос'
+        >>> get_object_name('АТОМ_КР_П_2024')
+        'АТОМ'
+    """
+    name = str(project_name)
+    
+    if re.search(r"СП\.ЛЛУ|стандарт|узлы|узел|библиотека", name, re.IGNORECASE):
+        return "Узлы и стандарты"
+    elif re.search(r"АТОМ|ДОУ|08-12|ИКП|ATOM|АПУ", name, re.IGNORECASE):
+        return "АТОМ"
+    elif re.search(r"K01", name, re.IGNORECASE):
+        return "Кортрос"
+    elif re.search(r"ИНПРО", name, re.IGNORECASE):
+        return "ИНПРО"
+    elif re.search(r"Ялта", name, re.IGNORECASE):
+        return "Ялта"
+    else:
+        return "Неизвестные проекты"
+
 
 def get_project_solution(project_name: str, object_name: str) -> str:
     """
