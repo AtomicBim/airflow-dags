@@ -23,6 +23,10 @@ from common.utils import (
 # Если разрыв между транзакциями > SESSION_GAP_SECONDS — считаем началом новой сессии
 SESSION_GAP_SECONDS = 900  # 15 минут
 
+# Минимальное время на транзакцию (для первых транзакций сессий)
+# Компенсирует потерю времени ДО первого действия
+MIN_TRANSACTION_SEC = 30  # 30 секунд
+
 # Путь к CSV файлу с маппингом транзакций (относительно корня проекта)
 MAPPING_CSV_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
@@ -298,10 +302,10 @@ def transform_added_elements(
     print(f"   - AD пользователей: {len(df_ad)}")
     print(f"   - Записей added_element: {len(df_added)}")
     
-    # 2. Подтягиваем имена пользователей из AD
+    # 2. Подтягиваем данные пользователей из AD (имя, отдел, раздел)
     print("\n2. Join с AD users по user_id...")
     df = df_added.merge(
-        df_ad[['id', 'display_name']],
+        df_ad[['id', 'display_name', 'department', 'project_section']],
         left_on='user_id',
         right_on='id',
         how='left'
@@ -311,6 +315,7 @@ def transform_added_elements(
     
     matched = df['user_name'].notna().sum()
     print(f"   - Совпало: {matched}/{len(df)} ({matched/len(df)*100:.1f}%)")
+    print(f"   - Отделов: {df['department'].nunique()}")
     
     # 3. Названия проекта: короткое и file_storage
     print("\n3. Создание short_project_name и file_storage_name...")
@@ -357,17 +362,15 @@ def transform_added_elements(
     print("\n8. Классификация пользователей...")
     df['is_bim'] = df['user_name'].isin(BIM_USERS)
     
-    # 9. Расчёт времени между транзакциями (в пределах пользователя и дня)
+    # 9. Расчёт времени между транзакциями (в пределах пользователя)
+    # Без группировки по дню - корректно считает ночную работу через полночь
     print("\n9. Расчёт времени между транзакциями...")
     
     # Сортируем по пользователю и времени
     df = df.sort_values(['user_name', 'date'])
     
-    # Добавляем колонку с датой (без времени) для группировки по дню
-    df['date_only'] = df['date'].dt.date
-    
-    # Время до предыдущей транзакции в секундах (в пределах пользователя и дня)
-    df['time_since_prev_sec'] = df.groupby(['user_name', 'date_only'])['date'].diff().dt.total_seconds()
+    # Время до предыдущей транзакции в секундах (в пределах пользователя, БЕЗ группировки по дню)
+    df['time_since_prev_sec'] = df.groupby(['user_name'])['date'].diff().dt.total_seconds()
     
     # Подгружаем последние транзакции из datalake для корректного расчёта на границе порций
     if postgres_conn_id:
@@ -380,52 +383,60 @@ def transform_added_elements(
         if df_prev is not None and not df_prev.empty:
             print(f"   - Найдено {len(df_prev)} предыдущих транзакций")
             
-            # Находим первые транзакции каждого пользователя за каждый день (где time_since_prev_sec = NaN)
+            # Находим первые транзакции каждого пользователя в порции (где time_since_prev_sec = NaN)
             first_trans_mask = df['time_since_prev_sec'].isna()
             
             if first_trans_mask.any():
-                # Для первых транзакций дня подставляем интервал от последней транзакции из datalake
-                df_first = df[first_trans_mask][['user_name', 'date', 'date_only']].copy()
+                # Для первых транзакций подставляем интервал от последней транзакции из datalake
+                df_first = df[first_trans_mask][['user_name', 'date']].copy()
                 df_first = df_first.merge(df_prev, on='user_name', how='left')
                 
                 # Рассчитываем интервал от предыдущей транзакции из datalake
-                # Только если prev_date в тот же день
-                df_first['prev_date_only'] = df_first['prev_date'].dt.date
-                same_day_mask = df_first['date_only'] == df_first['prev_date_only']
-                
-                df_first.loc[same_day_mask, 'corrected_interval'] = (
-                    df_first.loc[same_day_mask, 'date'] - df_first.loc[same_day_mask, 'prev_date']
+                df_first['corrected_interval'] = (
+                    df_first['date'] - df_first['prev_date']
                 ).dt.total_seconds()
                 
-                # Обновляем интервалы в основном DataFrame
+                # Обновляем интервалы в основном DataFrame (только если <= SESSION_GAP_SECONDS)
                 corrected_count = 0
                 for idx, row in df_first.iterrows():
-                    if pd.notna(row.get('corrected_interval')):
-                        df.loc[idx, 'time_since_prev_sec'] = row['corrected_interval']
+                    interval = row.get('corrected_interval')
+                    if pd.notna(interval) and interval <= SESSION_GAP_SECONDS:
+                        df.loc[idx, 'time_since_prev_sec'] = interval
                         corrected_count += 1
                 
                 print(f"   - Скорректировано интервалов: {corrected_count}")
     
-    # Первая транзакция дня (без предыдущей в datalake) = NaN, заполняем 0
+    # Первая транзакция пользователя (без предыдущей в datalake) = NaN, заполняем 0
     df['time_since_prev_sec'] = df['time_since_prev_sec'].fillna(0)
     
-    # Флаг "начало сессии" если разрыв > SESSION_GAP_SECONDS или первая транзакция дня
+    # Флаг "начало сессии" если разрыв > SESSION_GAP_SECONDS или первая транзакция
     df['is_session_start'] = (df['time_since_prev_sec'] > SESSION_GAP_SECONDS) | (df['time_since_prev_sec'] == 0)
     
-    # Статистика по интервалам (исключая нулевые - первые транзакции дня)
-    active_intervals = df[df['time_since_prev_sec'] > 0]['time_since_prev_sec']
+    # Статистика по интервалам ДО обнуления пауз
+    active_intervals = df[(df['time_since_prev_sec'] > 0) & (df['time_since_prev_sec'] <= SESSION_GAP_SECONDS)]['time_since_prev_sec']
     if len(active_intervals) > 0:
-        print(f"   - Средний интервал: {active_intervals.mean():.1f} сек")
-        print(f"   - Медианный интервал: {active_intervals.median():.1f} сек")
+        print(f"   - Средний активный интервал: {active_intervals.mean():.1f} сек")
+        print(f"   - Медианный активный интервал: {active_intervals.median():.1f} сек")
     print(f"   - Сессий (разрыв > {SESSION_GAP_SECONDS} сек): {df['is_session_start'].sum()}")
     
-    # Убираем вспомогательную колонку
-    df.drop(columns=['date_only'], inplace=True)
+    # Обнуляем большие интервалы (паузы > SESSION_GAP_SECONDS = не работа)
+    # Это позволяет в DataLens просто суммировать time_since_prev_sec для получения времени работы
+    pause_count = (df['time_since_prev_sec'] > SESSION_GAP_SECONDS).sum()
+    df.loc[df['time_since_prev_sec'] > SESSION_GAP_SECONDS, 'time_since_prev_sec'] = 0
+    print(f"   - Обнулено пауз (> {SESSION_GAP_SECONDS} сек): {pause_count}")
+    
+    # Устанавливаем минимальное время для первых транзакций сессий
+    # Компенсирует потерю времени ДО первого действия в сессии
+    session_start_count = df['is_session_start'].sum()
+    df.loc[df['is_session_start'], 'time_since_prev_sec'] = MIN_TRANSACTION_SEC
+    print(f"   - Установлено мин. время ({MIN_TRANSACTION_SEC} сек) для {session_start_count} начал сессий")
     
     # 10. Формируем итоговый DataFrame
     result_columns = [
         'date',
         'user_name',
+        'department',
+        'project_section',
         'short_project_name',
         'file_storage_name',
         'object_name',
