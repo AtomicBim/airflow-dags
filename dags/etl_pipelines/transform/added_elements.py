@@ -4,7 +4,9 @@ Transform модуль для Added Elements pipeline.
 """
 import pandas as pd
 import re
-from typing import Tuple, Optional
+import os
+from typing import Tuple, Optional, Dict
+from functools import lru_cache
 
 # Импорт из централизованной конфигурации и утилит
 from common.config import BIM_USERS
@@ -17,72 +19,135 @@ from common.utils import (
 )
 
 
-# Маски для классификации транзакций Revit
-PLUGIN_PATTERN = r'modplus|mpd|mpr|mp:|аск:|ack:|diroots|paramanager|microdesk|dynamo|bim:|pris'
-
 # Порог неактивности для определения новой сессии (в секундах)
 # Если разрыв между транзакциями > SESSION_GAP_SECONDS — считаем началом новой сессии
 SESSION_GAP_SECONDS = 900  # 15 минут
 
-TRANSACTION_CATEGORIES = {
-    # Вывод данных из модели
-    "Печать и экспорт": r'печать|экспорт|pdf|dwg|ifc|print|export',
+# Путь к CSV файлу с маппингом транзакций (относительно корня проекта)
+MAPPING_CSV_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+    "mappings", "transactions.csv"
+)
+
+# ============================================================================
+# ПАТТЕРНЫ ДЛЯ КЛАССИФИКАЦИИ
+# ============================================================================
+
+# Паттерн для определения плагинов
+PLUGIN_PATTERN = r'^аск:|^ack:|microdesk|mpr[A-Z]|modplus|квартирография'
+
+# Fallback-паттерны для классификации НОВЫХ транзакций (не найденных в CSV)
+# Порядок важен: проверяются сверху вниз
+FALLBACK_PATTERNS = {
+    "Удаление": r'удал|delete|remove|purge',
     
-    # Удаление элементов
-    "Удаление": r'удален|удалить|delete|remove|purge|очист',
+    "Печать и экспорт": r'печать|экспорт|export|pdf|dwg|ifc',
     
-    # Оформление чертежей и документации
-    "Оформление": r'вид|размер|текст|марк|бирка|аннотац|лист|спецификац|легенд|цветов|view|dimension|dim|text|tag|annotation|sheet|schedule|legend|color|elevation|section|разрез|фасад|узел|маркер|выноска|график|фильтр|стиль|штамп|рамка|подложка|граница|область|маскировка|символ|outline|detail|детализац|план',
+    "Материалы": r'материал',
     
-    # Создание и редактирование 3D-элементов модели
-    "Построение (моделирование)": r'стена|труба|перекрыти|крыш|лестниц|окно|дверь|армиров|арматур|колонн|балок|потолок|пол|оборудован|воздуховод|лоток|фитинг|мебель|семейств|компонент|create|draw|sketch|place|insert|bend|wall|pipe|duct|floor|roof|stair|window|door|column|beam|reinforcement|rebar|part|topography|эскиз|отделк|проем|отверсти|спринклер|тройник|отвод|переход|кабель|mep|соединение|panel|корпуса|коробка|потребител|траектория|ограждение|топо-поверхность|точка|плоскость|workplane|элемент|построен|размещен|вставка|каркас|торцеобразовател|гидроизоляц|радиатор|решетк|гильз|муфт|цепь|поток|topology|cable|fitting|fixture|вложение|воздухораспределитель|заглушка|балка|витраж|пространств|отрисовка|вытягивание|вырезание|редактиров|изменение типа|copy|копиров|вариант|вариаци|duplicate|дублиров',
+    "Оформление": r'вид|размер|марк|лист|спецификац|легенд|разрез|фасад|'
+                  r'план|текст|аннотац|нумерац|фрагмент|фильтр|шаблон|tag|dim',
     
-    # Работа с материалами и текстурами
-    "Материалы": r'материал|material|текстур|texture|покрыти|краск|цвет поверхност',
+    "Управление моделью": r'параметр|связь|семейств|группа|загруз|сохран|'
+                         r'рабоч|уровень|штрихов|стил|настро|выгруз|блокир|'
+                         r'workset|setting|parameter',
     
-    # Управление структурой и настройками модели
-    "Управление моделью": r'изменен|модифик|параметр|настройк|связь|уровен|ось|групп|категор|стадия|parameter|setting|link|level|grid|group|category|phase|data storage|synchronize|save|сохранить|переименов|move|rotate|mirror|перенос|поворот|зеркал|split|разделить|соединить|join|cut|изменить|загрузка|обновить|disconnect|отсоединить|смещение|alignment|выравниван|проверк|check|update|modify|process|rule|selection|выделение|property|свойств|статус|status|синхрониз|скрытие|изоляц|сборк|буфер|выбор|рабочая плоскость|тест|согласование|guidstorage'
+    "Построение (моделирование)": r'стена|труба|перекрыт|крыш|дверь|окно|'
+                                   r'колонн|балк|потолок|армир|арматур|'
+                                   r'воздуховод|фитинг|проем|отверст|лестниц|'
+                                   r'ограждение|компонент|эскиз|копир|вставк|'
+                                   r'соедин|создать|редактир|wall|pipe|duct|'
+                                   r'floor|roof|door|window|create|bend',
 }
 
 # ============================================================================
 # ОПИСАНИЕ КЛАССОВ ТРАНЗАКЦИЙ
 # ============================================================================
 #
-# 1. ПЕЧАТЬ И ЭКСПОРТ
-#    Операции вывода данных из модели: печать чертежей, экспорт в форматы
-#    PDF, DWG, IFC и другие. Используется для передачи документации.
-#
-# 2. УДАЛЕНИЕ
-#    Удаление элементов из модели: delete, remove, purge (очистка неиспользуемых).
-#    Важно для отслеживания потерь данных и оптимизации модели.
-#
-# 3. ОФОРМЛЕНИЕ
-#    Работа с 2D-оформлением: виды, размеры, текст, марки, спецификации,
-#    листы, легенды, разрезы, фасады, детали. Подготовка документации.
-#
-# 4. ПОСТРОЕНИЕ (МОДЕЛИРОВАНИЕ)
-#    Создание и редактирование 3D-элементов: стены, перекрытия, крыши,
-#    окна, двери, трубы, воздуховоды, арматура, оборудование, MEP-системы.
-#    Включает копирование, редактирование, изменение типа, вариации элементов.
-#
-# 5. МАТЕРИАЛЫ
-#    Работа с материалами и текстурами: назначение, редактирование,
-#    создание новых материалов. Визуальное оформление модели.
-#
-# 6. УПРАВЛЕНИЕ МОДЕЛЬЮ
-#    Настройки и структура модели: параметры, уровни, оси, группы,
-#    категории, стадии, связи, синхронизация, сохранение.
-#    Не включает непосредственное редактирование геометрии.
-#
-# 7. СИСТЕМНЫЕ REVIT (по умолчанию)
-#    Все остальные транзакции, не попавшие в категории выше.
-#    Внутренние операции Revit, служебные процессы.
+# 1. ПЕЧАТЬ И ЭКСПОРТ - вывод данных: печать, экспорт PDF/DWG/IFC
+# 2. УДАЛЕНИЕ - удаление элементов из модели
+# 3. ОФОРМЛЕНИЕ - 2D: виды, размеры, марки, спецификации, листы
+# 4. ПОСТРОЕНИЕ (МОДЕЛИРОВАНИЕ) - 3D: стены, трубы, арматура, MEP
+# 5. МАТЕРИАЛЫ - работа с материалами и текстурами
+# 6. УПРАВЛЕНИЕ МОДЕЛЬЮ - параметры, связи, группы, синхронизация
+# 7. СИСТЕМНЫЕ REVIT - внутренние операции (по умолчанию)
 # ============================================================================
+
+
+@lru_cache(maxsize=1)
+def _load_transaction_mapping() -> Dict[str, Tuple[str, bool]]:
+    """
+    Загружает маппинг транзакций из CSV файла.
+    Кэширует результат для повторного использования.
+    
+    Returns:
+        Словарь {название_транзакции: (класс, is_plugin)}
+    """
+    mapping = {}
+    
+    # Пробуем разные пути к файлу
+    possible_paths = [
+        MAPPING_CSV_PATH,
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", "mappings", "transactions.csv"),
+        "/opt/airflow/mappings/transactions.csv",  # для Docker
+    ]
+    
+    csv_path = None
+    for path in possible_paths:
+        if os.path.exists(path):
+            csv_path = path
+            break
+    
+    if csv_path is None:
+        print(f"⚠️ ВНИМАНИЕ: CSV файл маппинга не найден. Используются только fallback-паттерны.")
+        return mapping
+    
+    try:
+        # Пробуем разные кодировки
+        for encoding in ['utf-8', 'utf-8-sig', 'cp1251']:
+            try:
+                df = pd.read_csv(csv_path, sep=';', encoding=encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            print(f"⚠️ Не удалось прочитать CSV с известными кодировками")
+            return mapping
+        
+        # Проверяем наличие нужных колонок
+        required_cols = ['transaction_name', 'class', 'is_plugin']
+        if not all(col in df.columns for col in required_cols):
+            print(f"⚠️ CSV файл не содержит нужных колонок: {required_cols}")
+            return mapping
+        
+        # Заполняем словарь
+        for _, row in df.iterrows():
+            name = str(row['transaction_name']).strip()
+            if not name or name == 'nan':
+                continue
+            
+            trans_class = str(row['class']).strip()
+            is_plugin_str = str(row['is_plugin']).strip().upper()
+            is_plugin = is_plugin_str in ('ИСТИНА', 'TRUE', '1', 'ДА', 'YES')
+            
+            mapping[name] = (trans_class, is_plugin)
+        
+        print(f"✓ Загружено {len(mapping)} транзакций из CSV")
+        
+    except Exception as e:
+        print(f"⚠️ Ошибка загрузки CSV маппинга: {e}")
+    
+    return mapping
 
 
 def classify_transaction(name: str) -> Tuple[str, bool]:
     """
-    Классифицирует транзакцию Revit по категории и определяет плагин.
+    Гибридная классификация транзакции Revit.
+    
+    Логика:
+    1. Точное совпадение в CSV маппинге (приоритет)
+    2. Fallback на regex-паттерны для новых транзакций
+    3. По умолчанию: "Системные Revit"
     
     Args:
         name: Название транзакции
@@ -90,13 +155,25 @@ def classify_transaction(name: str) -> Tuple[str, bool]:
     Returns:
         Tuple (category, is_plugin)
     """
-    name_lower = str(name).lower()
+    name_str = str(name).strip()
+    
+    # 1. Загружаем маппинг из CSV (кэшируется)
+    mapping = _load_transaction_mapping()
+    
+    # 2. Проверяем точное совпадение
+    if name_str in mapping:
+        return mapping[name_str]
+    
+    # 3. Определяем, является ли это плагином
+    name_lower = name_str.lower()
     is_plugin = bool(re.search(PLUGIN_PATTERN, name_lower))
     
-    for category, pattern in TRANSACTION_CATEGORIES.items():
+    # 4. Fallback на паттерны для новых транзакций
+    for category, pattern in FALLBACK_PATTERNS.items():
         if re.search(pattern, name_lower):
             return category, is_plugin
     
+    # 5. По умолчанию - системные
     return "Системные Revit", is_plugin
 
 
@@ -260,8 +337,8 @@ def transform_added_elements(
     
     print(f"   - Диапазон дат: {df['date'].min()} - {df['date'].max()}")
     
-    # 6. Классификация транзакций
-    print("\n6. Классификация транзакций...")
+    # 6. Классификация транзакций (гибридный подход)
+    print("\n6. Классификация транзакций (CSV + fallback)...")
     classifications = df['transaction_name'].apply(classify_transaction)
     df['class'] = classifications.apply(lambda x: x[0])
     df['is_plugin'] = classifications.apply(lambda x: x[1])
