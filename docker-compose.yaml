@@ -76,10 +76,8 @@ x-airflow-common:
     - ./dags:/opt/airflow/dags
     - ./config:/opt/airflow/config
     - ./mappings:/opt/airflow/mappings
-    - /home/corpadm/data/airflow/logs:/opt/airflow/logs
-    - /home/corpadm/data/airflow/data:/opt/airflow/data
-  networks:
-    - ai_network
+    # - /home/corpadm/data/airflow/logs:/opt/airflow/logs
+    # - /home/corpadm/data/airflow/data:/opt/airflow/data
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -105,8 +103,6 @@ services:
       retries: 5
       start_period: 5s
     restart: always
-    networks:
-    - ai_network
 
   redis:
     # Redis is limited to 7.2-bookworm due to licencing change
@@ -121,14 +117,12 @@ services:
       retries: 50
       start_period: 30s
     restart: always
-    networks:
-      - ai_network
 
   airflow-apiserver:
     <<: *airflow-common
     command: api-server
-    #ports:
-    #  - "10081:8080"
+    ports:
+      - "10081:8080"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
       interval: 30s
@@ -136,8 +130,6 @@ services:
       retries: 5
       start_period: 30s
     restart: always
-    networks:
-      - ai_network
     depends_on:
       <<: *airflow-common-depends-on
       airflow-init:
@@ -153,8 +145,6 @@ services:
       retries: 5
       start_period: 30s
     restart: always
-    networks:
-      - ai_network
     depends_on:
       <<: *airflow-common-depends-on
       airflow-init:
@@ -170,8 +160,6 @@ services:
       retries: 5
       start_period: 30s
     restart: always
-    networks:
-      - ai_network
     depends_on:
       <<: *airflow-common-depends-on
       airflow-init:
@@ -195,8 +183,6 @@ services:
       # See https://airflow.apache.org/docs/docker-stack/entrypoint.html#signal-propagation
       DUMB_INIT_SETSID: "0"
     restart: always
-    networks:
-      - ai_network
     depends_on:
       <<: *airflow-common-depends-on
       airflow-apiserver:
@@ -214,8 +200,6 @@ services:
       retries: 5
       start_period: 30s
     restart: always
-    networks:
-      - ai_network
     depends_on:
       <<: *airflow-common-depends-on
       airflow-init:
@@ -312,8 +296,6 @@ services:
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
       _PIP_ADDITIONAL_REQUIREMENTS: ''
     user: "0:0"
-    networks:
-      - ai_network
 
   airflow-cli:
     <<: *airflow-common
@@ -329,8 +311,6 @@ services:
       - airflow
     depends_on:
       <<: *airflow-common-depends-on
-    networks:
-      - ai_network
 
   # You can enable flower by adding "--profile flower" option e.g. docker-compose --profile flower up
   # or by explicitly targeted on the command line e.g. docker-compose up flower.
@@ -349,8 +329,6 @@ services:
       retries: 5
       start_period: 30s
     restart: always
-    networks:
-      - ai_network
     depends_on:
       <<: *airflow-common-depends-on
       airflow-init:
@@ -358,6 +336,3 @@ services:
 
 volumes:
   postgres-db-volume:
-networks:
-  ai_network:
-    external: true
