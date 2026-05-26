@@ -41,10 +41,10 @@ def projectsync_etl():
 
     @task
     def extract_project_sync() -> str:
-        """Извлекает project_sync из pluginsdb."""
+        """Извлекает project_sync из tim_db_revit."""
         output_path = str(DATA_ROOT / "tim_export_project_sync.csv")
         return pluginsdb.extract_project_sync(
-            postgres_conn_id="tim_db_pluginsdb",
+            postgres_conn_id="tim_db_revit",
             output_path=output_path
         )
 

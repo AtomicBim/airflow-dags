@@ -31,36 +31,45 @@ def transform_projectsync_analytics(
     df_sync = pd.read_csv(sync_path)
 
     # === Слияние с AD ===
+    # Соединяем по UUID (user_id в таблице sync и id в таблице AD)
     df_sync = df_sync.merge(
-        df_ad[["display_name", "department", "project_section"]],
+        df_ad[["id", "display_name", "email", "department", "project_section", "company", "enabled"]],
         how="left",
-        left_on="user_display_name",
-        right_on="display_name"
-    ).drop(columns="display_name")
+        left_on="user_id",
+        right_on="id"
+    )
+    
+    # Удаляем дублирующийся столбец id после слияния, если он есть
+    if "id" in df_sync.columns:
+        df_sync = df_sync.drop(columns=["id"])
+
+    # === Извлечение username из email ===
+    # Если email ivanov_i@atomsk.ru, то username будет ivanov_i
+    df_sync["username"] = df_sync["email"].astype(str).str.split("@").str[0]
 
     # === Классификация пользователей ===
-    df_sync["is_bim"] = df_sync["user_display_name"].isin(BIM_USERS)
+    df_sync["is_bim"] = df_sync["display_name"].isin(BIM_USERS)
 
     # === Создание короткого названия ===
-    df_sync['short_project_name'] = df_sync['project_name'].astype(str).apply(extract_short_name)
+    df_sync['short_project_name'] = df_sync['project_title'].astype(str).apply(extract_short_name)
 
-    df_sync = df_sync.drop(columns=[
-        'program_name',
-        'program_version',
-    ])
+    # Удаляем неиспользуемые технические колонки из новой таблицы
+    cols_to_drop = [col for col in ['cad_program_id', 'cad_program_version'] if col in df_sync.columns]
+    if cols_to_drop:
+        df_sync = df_sync.drop(columns=cols_to_drop)
 
     # === Определение объекта ===
-    mask_atom = df_sync["project_name"].str.contains(
+    mask_atom = df_sync["project_title"].str.contains(
         "АТОМ|ДОУ|08-12|ИКП|ATOM|АПУ", case=False, na=False
     )
 
     df_sync["object_name"] = np.select(
         [
-            df_sync["project_name"].str.contains("СП.ЛЛУ|стандарт|узлы|узел|библиотека", case=False, na=False),
+            df_sync["project_title"].str.contains("СП.ЛЛУ|стандарт|узлы|узел|библиотека", case=False, na=False),
             mask_atom,
-            df_sync["project_name"].str.contains("K01", case=False, na=False),
-            df_sync["project_name"].str.contains("ИНПРО", case=False, na=False),
-            df_sync["project_name"].str.contains("Ялта", case=False, na=False)
+            df_sync["project_title"].str.contains("K01", case=False, na=False),
+            df_sync["project_title"].str.contains("ИНПРО", case=False, na=False),
+            df_sync["project_title"].str.contains("Ялта", case=False, na=False)
         ],
         [
             "Узлы и стандарты",
@@ -73,27 +82,28 @@ def transform_projectsync_analytics(
     )
 
     # === Флаг отсоединенных проектов ===
-    df_sync["is_detached"] = df_sync["project_name"].str.contains("отсоединено", case=False, na=False).astype(int)
+    df_sync["is_detached"] = df_sync["project_title"].str.contains("отсоединено", case=False, na=False).astype(int)
 
     # === Извлечение имени файлового хранилища (векторизованная версия) ===
-    # Разбиваем project_name на части
-    project_parts = df_sync["project_name"].astype(str).str.split("_")
+    # Разбиваем project_title на части
+    project_parts = df_sync["project_title"].astype(str).str.split("_")
     # Получаем последнюю часть
     last_part = project_parts.str[-1].str.strip().str.lower()
-    # Получаем username в нижнем регистре
-    username_lower = df_sync["username"].astype(str).str.strip().str.lower()
+    # Получаем username в нижнем регистре (тот, что вытащили из email)
+    username_lower = df_sync["username"].str.strip().str.lower()
+    
     # Проверяем совпадение
     mask_match = (last_part == username_lower) & (project_parts.str.len() >= 2)
     # Создаем file_storage_name: если совпадает - убираем последнюю часть, иначе оставляем как есть
-    df_sync["file_storage_name"] = df_sync["project_name"].copy()
+    df_sync["file_storage_name"] = df_sync["project_title"].copy()
     df_sync.loc[mask_match, "file_storage_name"] = project_parts[mask_match].str[:-1].str.join("_")
 
     # === Определение раздела и стадии проекта ===
     df_sync["project_solution_name"] = df_sync.apply(
-        lambda row: get_project_solution(row["project_name"], row["object_name"]), axis=1
+        lambda row: get_project_solution(row["project_title"], row["object_name"]), axis=1
     )
     df_sync["project_stage_name"] = df_sync.apply(
-        lambda row: get_project_stage(row["project_name"], row["object_name"]), axis=1
+        lambda row: get_project_stage(row["project_title"], row["object_name"]), axis=1
     )
 
     # === Заполнение пропусков ===
