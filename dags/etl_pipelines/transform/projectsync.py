@@ -17,12 +17,12 @@ def transform_projectsync_analytics(
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     
     # 1. Чтение данных
-    df_ad = pd.read_csv(ad_path)
-    df_legacy = pd.read_csv(legacy_sync_path)
-    df_new = pd.read_csv(new_sync_path)
+    df_ad = pd.read_csv(ad_path, low_memory=False)
+    df_legacy = pd.read_csv(legacy_sync_path, low_memory=False)
+    df_new = pd.read_csv(new_sync_path, low_memory=False)
 
     # Подготовка справочника AD
-    df_ad_clean = df_ad[["id", "display_name", "email", "department", "project_section", "company", "enabled"]].copy()
+    df_ad_clean = df_ad[["id", "display_name", "email", "department", "project_doc_section", "company", "enabled"]].copy()
     # Вытаскиваем логин до @ для стыковки со старой таблицей
     df_ad_clean["ad_username"] = df_ad_clean["email"].astype(str).str.split("@").str[0].str.lower().str.strip()
     df_ad_unique = df_ad_clean.drop_duplicates(subset=["ad_username"])
