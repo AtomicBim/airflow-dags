@@ -1,95 +1,80 @@
 """
 Transform модуль для ProjectSync pipeline.
-Обрабатывает данные синхронизации проектов с классификацией по BIM/дизайнерам.
+Обрабатывает старые и новые данные синхронизации проектов.
 """
 import pandas as pd
 import numpy as np
 from typing import Tuple
 
-# Импорт из централизованной конфигурации и утилит
 from common.config import BIM_USERS
 from common.utils import extract_short_name, extract_file_storage_name, get_project_solution, get_project_stage
 
-
 def transform_projectsync_analytics(
     ad_path: str,
-    sync_path: str,
+    legacy_sync_path: str,
+    new_sync_path: str,
     **context
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Трансформирует данные для projectsync pipeline с гибридным слиянием.
-    До 01.03.2026: по логину в названии проекта (хвост).
-    После 01.03.2026: по user_id (GUID).
-    """
-    # Чтение данных
+    
+    # 1. Чтение данных
     df_ad = pd.read_csv(ad_path)
-    df_sync = pd.read_csv(sync_path)
+    df_legacy = pd.read_csv(legacy_sync_path)
+    df_new = pd.read_csv(new_sync_path)
 
-    # === Гибридное слияние с AD (по дате 01.03.2026) ===
-    
-    # Переводим дату в формат datetime для безопасного сравнения
-    df_sync["date_parsed"] = pd.to_datetime(df_sync["date"], errors="coerce").dt.tz_localize(None)
-    cutoff_date = pd.to_datetime("2026-03-01")
-    
-    # Разделяем на новые и старые записи
-    mask_new = df_sync["date_parsed"] >= cutoff_date
-    df_sync_new = df_sync[mask_new].copy()
-    df_sync_old = df_sync[~mask_new].copy()
+    # Подготовка справочника AD
+    df_ad_clean = df_ad[["id", "display_name", "email", "department", "project_section", "company", "enabled"]].copy()
+    # Вытаскиваем логин до @ для стыковки со старой таблицей
+    df_ad_clean["ad_username"] = df_ad_clean["email"].astype(str).str.split("@").str[0].str.lower().str.strip()
+    df_ad_unique = df_ad_clean.drop_duplicates(subset=["ad_username"])
 
-    # --- 1. Слияние для НОВЫХ записей (>= 01.03.2026) по GUID ---
-    df_sync_new = df_sync_new.merge(
-        df_ad[["id", "display_name", "email", "department", "project_section", "company", "enabled"]],
+    # 2. Обработка СТАРЫХ данных (legacy)
+    # Приводим к общему формату
+    df_legacy = df_legacy.rename(columns={"project_name": "project_title"})
+    df_legacy["username_lower"] = df_legacy["username"].astype(str).str.lower().str.strip()
+    
+    # Соединяем с AD по username == ad_username
+    df_legacy = df_legacy.merge(
+        df_ad_unique,
+        how="left",
+        left_on="username_lower",
+        right_on="ad_username"
+    )
+    # Убираем лишние колонки
+    df_legacy = df_legacy.drop(columns=[
+        "username_lower", "ad_username", "user_display_name", "program_name", "program_version"
+    ], errors="ignore")
+
+    # 3. Обработка НОВЫХ данных (revit)
+    # Соединяем с AD по GUID
+    df_new = df_new.merge(
+        df_ad_clean,
         how="left",
         left_on="user_id",
         right_on="id"
     )
-    if "id" in df_sync_new.columns:
-        df_sync_new = df_sync_new.drop(columns=["id"])
+    # Убираем лишние колонки
+    df_new = df_new.drop(columns=["cad_program_id", "cad_program_version", "ad_username"], errors="ignore")
+    # Достаем username из email для алгоритма обрезки файлов
+    df_new["username"] = df_new["email"].astype(str).str.split("@").str[0]
 
-    # --- 2. Слияние для СТАРЫХ записей (< 01.03.2026) по хвосту ---
-    # Готовим справочник AD: вытаскиваем логин (до @)
-    df_ad_old = df_ad[["display_name", "email", "department", "project_section", "company", "enabled"]].copy()
-    df_ad_old["ad_username"] = df_ad_old["email"].astype(str).str.split("@").str[0].str.lower().str.strip()
-    df_ad_old = df_ad_old.drop_duplicates(subset=["ad_username"]) # Удаляем дубли, чтобы избежать размножения строк
+    # 4. ОБЪЕДИНЕНИЕ СТАРОЙ И НОВОЙ БАЗЫ
+    df_sync = pd.concat([df_legacy, df_new], ignore_index=True)
+    if "id" in df_sync.columns:
+        df_sync = df_sync.drop(columns=["id"])
 
-    # Извлекаем "хвост" из project_title в старых записях (все, что после последнего "_")
-    df_sync_old["project_title_tail"] = df_sync_old["project_title"].astype(str).str.split("_").str[-1].str.lower().str.strip()
-
-    df_sync_old = df_sync_old.merge(
-        df_ad_old,
-        how="left",
-        left_on="project_title_tail",
-        right_on="ad_username"
-    )
-    # Чистим временные колонки слияния
-    df_sync_old = df_sync_old.drop(columns=["ad_username", "project_title_tail"], errors="ignore")
-
-    # --- Склеиваем датафреймы обратно ---
-    df_sync = pd.concat([df_sync_new, df_sync_old], ignore_index=True)
-    df_sync = df_sync.drop(columns=["date_parsed"]) # Удаляем техническую колонку с датой
-
-
-    # === Извлечение username из email (для всех склеенных данных) ===
-    df_sync["username"] = df_sync["email"].astype(str).str.split("@").str[0]
-    # Защита: если email не нашелся, ставим честный NaN (чтобы не было текста "nan")
+    # 5. БИЗНЕС-ЛОГИКА (применяется ко всем данным)
+    
+    # Защита от пустых email/username
     df_sync.loc[df_sync["email"].isna(), "username"] = np.nan
 
-    # === Классификация пользователей ===
+    # Флаг BIM
     df_sync["is_bim"] = df_sync["display_name"].isin(BIM_USERS)
 
-    # === Создание короткого названия ===
+    # Короткое название
     df_sync['short_project_name'] = df_sync['project_title'].astype(str).apply(extract_short_name)
 
-    # Удаляем неиспользуемые технические колонки из новой таблицы
-    cols_to_drop = [col for col in ['cad_program_id', 'cad_program_version'] if col in df_sync.columns]
-    if cols_to_drop:
-        df_sync = df_sync.drop(columns=cols_to_drop)
-
-    # === Определение объекта ===
-    mask_atom = df_sync["project_title"].str.contains(
-        "АТОМ|ДОУ|08-12|ИКП|ATOM|АПУ", case=False, na=False
-    )
-
+    # Объект
+    mask_atom = df_sync["project_title"].str.contains("АТОМ|ДОУ|08-12|ИКП|ATOM|АПУ", case=False, na=False)
     df_sync["object_name"] = np.select(
         [
             df_sync["project_title"].str.contains("СП.ЛЛУ|стандарт|узлы|узел|библиотека", case=False, na=False),
@@ -98,31 +83,23 @@ def transform_projectsync_analytics(
             df_sync["project_title"].str.contains("ИНПРО", case=False, na=False),
             df_sync["project_title"].str.contains("Ялта", case=False, na=False)
         ],
-        [
-            "Узлы и стандарты",
-            "АТОМ",
-            "Кортрос",
-            "ИНПРО",
-            "Ялта"
-        ],
+        ["Узлы и стандарты", "АТОМ", "Кортрос", "ИНПРО", "Ялта"],
         default="Неизвестные проекты"
     )
 
-    # === Флаг отсоединенных проектов ===
+    # Отсоединено
     df_sync["is_detached"] = df_sync["project_title"].str.contains("отсоединено", case=False, na=False).astype(int)
 
-    # === Извлечение имени файлового хранилища (векторизованная версия) ===
+    # File storage name
     project_parts = df_sync["project_title"].astype(str).str.split("_")
     last_part = project_parts.str[-1].str.strip().str.lower()
     username_lower = df_sync["username"].astype(str).str.strip().str.lower()
     
-    # Добавлено условие: ~df_sync["username"].isna(), чтобы пустые не матчились с пустыми
     mask_match = (last_part == username_lower) & (project_parts.str.len() >= 2) & (~df_sync["username"].isna())
-    
     df_sync["file_storage_name"] = df_sync["project_title"].copy()
     df_sync.loc[mask_match, "file_storage_name"] = project_parts[mask_match].str[:-1].str.join("_")
 
-    # === Определение раздела и стадии проекта ===
+    # Раздел и стадия
     df_sync["project_solution_name"] = df_sync.apply(
         lambda row: get_project_solution(row["project_title"], row["object_name"]), axis=1
     )
@@ -130,7 +107,7 @@ def transform_projectsync_analytics(
         lambda row: get_project_stage(row["project_title"], row["object_name"]), axis=1
     )
 
-    # === Заполнение пропусков ===
+    # Заполнение пустых
     fill_values = {}
     for col in df_sync.columns:
         if df_sync[col].dtype == 'object':
@@ -142,7 +119,7 @@ def transform_projectsync_analytics(
 
     df_sync.fillna(fill_values, inplace=True)
 
-    # === Разделение на BIM и designers (только не отсоединенные) ===
+    # Разделение
     df_sync_bim = df_sync[(df_sync['is_bim'] == True) & (df_sync['is_detached'] == 0)].copy()
     df_sync_designers = df_sync[(df_sync['is_bim'] == False) & (df_sync['is_detached'] == 0)].copy()
 

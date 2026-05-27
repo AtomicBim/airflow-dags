@@ -62,17 +62,28 @@ def extract_development_stage(postgres_conn_id: str, output_path: str, **context
     return output_path
 
 
-def extract_project_sync(postgres_conn_id: str, output_path: str, **context) -> str:
-    """Экспортирует таблицу projects.project_sync из pluginsdb."""
+def extract_legacy_project_sync(postgres_conn_id: str, output_path: str, **context) -> str:
+    """Экспортирует старую таблицу legacy.project_sync_legacy (до 2 марта 2026)."""
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
     conn = hook.get_conn()
-    sql = 'SELECT * FROM revit.new_project_sync'
+    sql = 'SELECT * FROM legacy.project_sync_legacy'
     df = pd.read_sql(sql, conn)
     conn.close()
 
     df.to_csv(output_path, index=False, encoding='utf-8')
-    print(f"Экспортировано {len(df)} записей project_sync в {output_path}")
+    print(f"Экспортировано {len(df)} СТАРЫХ записей project_sync в {output_path}")
+    return output_path
 
+def extract_new_project_sync(postgres_conn_id: str, output_path: str, **context) -> str:
+    """Экспортирует новую таблицу revit.project_sync (после 2 марта 2026)."""
+    hook = PostgresHook(postgres_conn_id=postgres_conn_id)
+    conn = hook.get_conn()
+    sql = 'SELECT * FROM revit.project_sync'
+    df = pd.read_sql(sql, conn)
+    conn.close()
+
+    df.to_csv(output_path, index=False, encoding='utf-8')
+    print(f"Экспортировано {len(df)} НОВЫХ записей project_sync в {output_path}")
     return output_path
 
 
