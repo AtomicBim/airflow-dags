@@ -7,10 +7,10 @@ from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 
 def extract_ad_users(postgres_conn_id: str, output_path: str, **context) -> str:
-    """Экспортирует таблицу users.ad_user из pluginsdb."""
+    """Экспортирует таблицу users.ad_user из users_db."""
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
     conn = hook.get_conn()
-    sql = 'SELECT * FROM users.ad_user'
+    sql = 'SELECT * FROM public.ad_user'
     df = pd.read_sql(sql, conn)
     conn.close()
 
