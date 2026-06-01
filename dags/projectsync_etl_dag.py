@@ -15,6 +15,8 @@ from etl_pipelines.extract import pluginsdb
 from etl_pipelines.transform import projectsync as transform_projectsync
 from etl_pipelines.load import datalake
 
+from common.common_tasks import extract_ad_users_task
+
 DATA_ROOT = Path(Variable.get("ETL_DATA_ROOT_PATH", default_var="/tmp/data")) / "projectsync"
 DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -29,8 +31,6 @@ def projectsync_etl():
 
     # Укажите здесь ваше название подключения к node3
     NODE3_REVIT_ID = "tim_db_revit"
-    NODE3_AD_ID = "tim_db_ad"
-
 
     @task
     def extract_legacy_sync() -> str:
@@ -56,15 +56,6 @@ def projectsync_etl():
         output_path = str(DATA_ROOT / "tim_export_project_sync_new.csv")
         return pluginsdb.extract_new_project_sync(
             postgres_conn_id=NODE3_REVIT_ID,
-            output_path=output_path
-        )
-
-    @task
-    def extract_ad_users() -> str:
-        """Извлекает AD users из новой БД на node3."""
-        output_path = str(DATA_ROOT / "tim_export_ad_user.csv")
-        return pluginsdb.extract_ad_users(
-            postgres_conn_id=NODE3_AD_ID, 
             output_path=output_path
         )
 
@@ -102,7 +93,7 @@ def projectsync_etl():
         )
 
     # Выполнение
-    ad_csv = extract_ad_users()
+    ad_csv = extract_ad_users_task(output_path=str(DATA_ROOT / "tim_export_ad_user.csv"))
     legacy_csv = extract_legacy_sync()
     new_csv = extract_new_sync()
 

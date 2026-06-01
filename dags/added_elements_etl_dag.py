@@ -15,6 +15,7 @@ from etl_pipelines.extract import pluginsdb
 from etl_pipelines.transform import added_elements as transform_added
 from etl_pipelines.load import datalake
 
+from common.common_tasks import extract_ad_users_task
 
 @dag(
     dag_id="added_elements_etl_dag",
@@ -54,17 +55,6 @@ def added_elements_etl():
     
     data_root = Path(Variable.get("ETL_DATA_ROOT_PATH", default_var="/tmp/data")) / "added_elements"
     data_root.mkdir(parents=True, exist_ok=True)
-    
-    # === Extract tasks ===
-    
-    @task
-    def extract_ad_users() -> str:
-        """Извлекает AD users из pluginsdb."""
-        output_path = str(data_root / "ad_users.csv")
-        return pluginsdb.extract_ad_users(
-            postgres_conn_id="tim_db_pluginsdb",
-            output_path=output_path
-        )
     
     @task
     def extract_added_elements() -> str:
@@ -200,7 +190,7 @@ def added_elements_etl():
     # === Определение зависимостей ===
     
     # Extract параллельно
-    ad_csv = extract_ad_users()
+    ad_csv = extract_ad_users_task(output_path=str(data_root / "ad_users.csv"))
     added_csv = extract_added_elements()
     
     # Transform ждёт оба extract

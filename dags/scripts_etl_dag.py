@@ -15,8 +15,7 @@ from airflow.models.variable import Variable
 from etl_pipelines.extract import pluginsdb
 from etl_pipelines.transform import scripts as transform_scripts
 from etl_pipelines.load import datalake
-from common.common_tasks import extract_plugins_task
-
+from common.common_tasks import extract_plugins_task, extract_ad_users_task
 
 # Переменные Airflow
 DATA_ROOT = Path(Variable.get("ETL_DATA_ROOT_PATH", default_var="/tmp/data")) / "scripts"
@@ -49,15 +48,6 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
 def scripts_etl():
 
     # === Extract tasks (параллельно) ===
-
-    @task
-    def extract_ad_users() -> str:
-        """Извлекает AD users из pluginsdb."""
-        output_path = str(DATA_ROOT / "tim_export_ad_user.csv")
-        return pluginsdb.extract_ad_users(
-            postgres_conn_id="tim_db_pluginsdb",
-            output_path=output_path
-        )
 
     @task
     def extract_monitoring() -> str:
@@ -154,7 +144,7 @@ def scripts_etl():
     # === Определение зависимостей ===
 
     # Все extract задачи запускаются параллельно
-    ad_csv = extract_ad_users()
+    ad_csv = extract_ad_users_task(output_path=str(DATA_ROOT / "tim_export_ad_user.csv"))
     plugin_csv = extract_plugins_task(output_path=str(DATA_ROOT / "tim_export_plugin.csv"))
     monitoring_csv = extract_monitoring()
     dev_stage_csv = extract_development_stage()

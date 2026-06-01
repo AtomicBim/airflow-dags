@@ -18,6 +18,7 @@ from etl_pipelines.load import datalake
 
 # Импорт конфигурации
 from common.config import BIM_USERS
+from common.common_tasks import extract_ad_users_task
 
 # Весовые коэффициенты для расчета метрики
 # w1 - вес для количества уникальных плагинов
@@ -108,15 +109,6 @@ def plugin_engagement_etl():
     # === Extract tasks (параллельно) ===
     
     @task
-    def extract_ad_users() -> str:
-        """Извлекает AD users из pluginsdb."""
-        output_path = str(data_root / "ad_users.csv")
-        return pluginsdb.extract_ad_users(
-            postgres_conn_id="tim_db_pluginsdb",
-            output_path=output_path
-        )
-    
-    @task
     def extract_monitoring() -> str:
         """Извлекает данные мониторинга плагинов из pluginsdb."""
         output_path = str(data_root / "monitoring.csv")
@@ -197,7 +189,7 @@ def plugin_engagement_etl():
     # === Определение зависимостей ===
     
     # Extract задачи запускаются параллельно
-    ad_csv = extract_ad_users()
+    ad_csv = extract_ad_users_task(output_path=str(data_root / "ad_users.csv"))
     monitoring_csv = extract_monitoring()
     
     # Transform ждет завершения extract

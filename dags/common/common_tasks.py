@@ -23,3 +23,10 @@ def extract_plugins_task(output_path: str, postgres_conn_id: str = "tim_db_plugi
         postgres_conn_id=postgres_conn_id,
         output_path=output_path
     )
+
+@task
+def extract_ad_users_task(output_path: str) -> str:
+    return pluginsdb.extract_ad_users(
+        postgres_conn_id="tim_db_ad", # Подключение задается в одном месте
+        output_path=output_path
+    )
