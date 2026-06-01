@@ -181,7 +181,15 @@ def transform_projectsync_analytics(
 
     df_sync.fillna(fill_values, inplace=True)
 
-    # 8. Разделение на BIM и Designers
+    # 8. Финальная фильтрация: убираем строки без идентифицированного пользователя.
+    # После fillna username для строк без email/match с AD = "Нет данных".
+    rows_before = len(df_sync)
+    df_sync = df_sync[df_sync["username"] != "Нет данных"].copy()
+    rows_dropped = rows_before - len(df_sync)
+    if rows_dropped > 0:
+        print(f"Отброшено {rows_dropped} строк с username='Нет данных'")
+
+    # 9. Разделение на BIM и Designers
     df_sync_bim = df_sync[(df_sync['is_bim'] == True) & (df_sync['is_detached'] == 0)].copy()
     df_sync_designers = df_sync[(df_sync['is_bim'] == False) & (df_sync['is_detached'] == 0)].copy()
 
