@@ -2,6 +2,7 @@
 Extractors для PluginsDB (PostgreSQL).
 Извлекают данные из различных схем и таблиц pluginsdb.
 """
+import os
 import pandas as pd
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
@@ -62,8 +63,31 @@ def extract_development_stage(postgres_conn_id: str, output_path: str, **context
     return output_path
 
 
-def extract_legacy_project_sync(postgres_conn_id: str, output_path: str, **context) -> str:
-    """Экспортирует старую таблицу legacy.project_sync_legacy (до 2 марта 2026)."""
+def extract_legacy_project_sync(
+    postgres_conn_id: str,
+    output_path: str,
+    force_reload: bool = False,
+    **context,
+) -> str:
+    """
+    Экспортирует старую таблицу legacy.project_sync_legacy (до 2 марта 2026).
+
+    Эта таблица содержит исторические данные и не пополняется новыми записями,
+    поэтому extract идемпотентен: при повторных запусках возвращается путь к уже
+    выгруженному CSV без обращения к БД.
+
+    Args:
+        postgres_conn_id: ID Airflow connection
+        output_path: Путь к CSV
+        force_reload: Если True — игнорировать существующий файл и выгрузить заново
+
+    Returns:
+        Путь к CSV файлу
+    """
+    if not force_reload and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        print(f"Legacy CSV уже существует, пропускаем выгрузку: {output_path}")
+        return output_path
+
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
     conn = hook.get_conn()
     sql = 'SELECT * FROM legacy.project_sync_legacy'

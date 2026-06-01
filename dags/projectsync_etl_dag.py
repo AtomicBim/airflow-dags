@@ -34,11 +34,20 @@ def projectsync_etl():
 
     @task
     def extract_legacy_sync() -> str:
-        """Извлекает старые данные из legacy.project_sync_legacy."""
+        """
+        Извлекает старые данные из legacy.project_sync_legacy.
+
+        Идемпотентен: если CSV уже выгружен — повторно к БД не обращаемся.
+        Принудительная перевыгрузка: Airflow Variable FORCE_RELOAD_LEGACY_SYNC=true.
+        """
         output_path = str(DATA_ROOT / "tim_export_project_sync_legacy.csv")
+        force_reload = Variable.get(
+            "FORCE_RELOAD_LEGACY_SYNC", default_var="false"
+        ).strip().lower() == "true"
         return pluginsdb.extract_legacy_project_sync(
             postgres_conn_id=NODE3_REVIT_ID,
-            output_path=output_path
+            output_path=output_path,
+            force_reload=force_reload,
         )
 
     @task
