@@ -137,6 +137,19 @@ def transform_scripts_analytics(
 
     df_monitoring.fillna(fill_values, inplace=True)
 
+    # === Финальная фильтрация: удаляем строки с пропущенными данными ===
+    # Строка дропается, если хотя бы в одной колонке есть NaN/NaT/None или "Нет данных".
+    # После fillna object-колонки заполнены "Нет данных", numeric — 0, datetime остается NaT.
+    rows_before_clean = len(df_monitoring)
+    mask_missing = (
+        df_monitoring.isna().any(axis=1)
+        | df_monitoring.isin(["Нет данных"]).any(axis=1)
+    )
+    df_monitoring = df_monitoring[~mask_missing].copy()
+    rows_dropped_clean = rows_before_clean - len(df_monitoring)
+    if rows_dropped_clean > 0:
+        print(f"Отброшено {rows_dropped_clean} строк с пропущенными данными (NaN/null/'Нет данных')")
+
     # === Разделение на BIM и designers ===
     df_monitoring_bim = df_monitoring[df_monitoring['is_bim'] == True].copy()
     df_monitoring_designers = df_monitoring[df_monitoring['is_bim'] == False].copy()

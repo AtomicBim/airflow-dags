@@ -189,7 +189,19 @@ def transform_projectsync_analytics(
     if rows_dropped > 0:
         print(f"Отброшено {rows_dropped} строк с username='Нет данных'")
 
-    # 9. Разделение на BIM и Designers
+    # 9. Финальная фильтрация: удаляем строки с пропущенными данными в любой колонке.
+    # Дропается строка, если хотя бы в одной колонке есть NaN/NaT/None или "Нет данных".
+    rows_before_clean = len(df_sync)
+    mask_missing = (
+        df_sync.isna().any(axis=1)
+        | df_sync.isin(["Нет данных"]).any(axis=1)
+    )
+    df_sync = df_sync[~mask_missing].copy()
+    rows_dropped_clean = rows_before_clean - len(df_sync)
+    if rows_dropped_clean > 0:
+        print(f"Отброшено {rows_dropped_clean} строк с пропущенными данными (NaN/null/'Нет данных')")
+
+    # 10. Разделение на BIM и Designers
     df_sync_bim = df_sync[(df_sync['is_bim'] == True) & (df_sync['is_detached'] == 0)].copy()
     df_sync_designers = df_sync[(df_sync['is_bim'] == False) & (df_sync['is_detached'] == 0)].copy()
 
