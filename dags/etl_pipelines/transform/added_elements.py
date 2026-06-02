@@ -1,7 +1,9 @@
 """
 Transform модуль для Added Elements pipeline.
-Обрабатывает данные о добавленных элементах с классификацией транзакций Revit.
+Обрабатывает данные о добавленных и модифицированных элементах с классификацией транзакций Revit.
+Объединяет данные из 3 источников: legacy.added_element_legacy, revit.added_element, revit.modified_element.
 """
+import json
 import pandas as pd
 import re
 import os
@@ -181,24 +183,41 @@ def classify_transaction(name: str) -> Tuple[str, bool]:
     return "Системные Revit", is_plugin
 
 
-def count_elements(element_ids: str) -> int:
+def count_elements(element_ids) -> int:
     """
-    Подсчитывает количество элементов в строке формата {id1,id2,id3}.
-    
+    Подсчитывает количество элементов в строке/массиве.
+
+    Поддерживает 2 формата:
+    - Legacy (varchar[]): '{14476419,14476420}' — postgres array literal
+    - New (jsonb): '["17279361", "17279362"]' — JSON array
+
     Args:
-        element_ids: Строка с ID элементов (например, '{14476419,14476420}')
-    
+        element_ids: Строка с ID элементов в одном из форматов выше
+
     Returns:
         Количество элементов
     """
-    if pd.isna(element_ids) or not element_ids:
+    if pd.isna(element_ids):
         return 0
-    
-    # Убираем фигурные скобки и считаем элементы
-    cleaned = str(element_ids).strip('{}')
+
+    s = str(element_ids).strip()
+    if not s or s in ('nan', '[]', '{}'):
+        return 0
+
+    # New jsonb формат: пробуем сначала распарсить как JSON массив
+    if s.startswith('['):
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return len(parsed)
+        except (json.JSONDecodeError, ValueError):
+            pass  # Fallback к ручному парсингу ниже
+
+    # Legacy varchar[] формат: '{id1,id2,id3}'
+    cleaned = s.strip('{}[]')
     if not cleaned:
         return 0
-    
+
     elements = cleaned.split(',')
     return len([e for e in elements if e.strip()])
 
@@ -273,63 +292,108 @@ def _fetch_last_user_transactions(
 
 def transform_added_elements(
     ad_path: str,
+    legacy_path: str,
     added_path: str,
+    modified_path: str,
     postgres_conn_id: Optional[str] = None,
     **context
 ) -> pd.DataFrame:
     """
-    Трансформирует данные о добавленных элементах.
-    
+    Трансформирует данные о добавленных и модифицированных элементах.
+
+    Объединяет 3 источника:
+    - legacy.added_element_legacy (до 2 марта 2026) — action_type='added'
+    - revit.added_element (после 2 марта 2026) — action_type='added'
+    - revit.modified_element (после 2 марта 2026) — action_type='modified'
+
     Args:
         ad_path: Путь к CSV с данными AD пользователей
-        added_path: Путь к CSV с данными added_element
+        legacy_path: Путь к CSV со СТАРЫМИ данными (legacy.added_element_legacy)
+        added_path: Путь к CSV с НОВЫМИ added данными (revit.added_element)
+        modified_path: Путь к CSV с НОВЫМИ modified данными (revit.modified_element)
         postgres_conn_id: ID Airflow connection для подгрузки предыдущих транзакций из datalake.
                          Если указан, интервалы времени рассчитываются с учётом данных из datalake
                          (для корректной работы при инкрементальной загрузке).
-    
+
     Returns:
         DataFrame с трансформированными данными
     """
     print("=" * 80)
-    print("НАЧАЛО ТРАНСФОРМАЦИИ: Added Elements")
+    print("НАЧАЛО ТРАНСФОРМАЦИИ: Added/Modified Elements")
     print("=" * 80)
-    
+
     # 1. Загрузка данных
     print("\n1. Загрузка данных...")
     df_ad = pd.read_csv(ad_path, encoding='utf-8')
+    df_legacy = pd.read_csv(legacy_path, encoding='utf-8')
     df_added = pd.read_csv(added_path, encoding='utf-8')
-    
+    df_modified = pd.read_csv(modified_path, encoding='utf-8')
+
     print(f"   - AD пользователей: {len(df_ad)}")
-    print(f"   - Записей added_element: {len(df_added)}")
-    
-    # 2. Подтягиваем данные пользователей из AD (имя, отдел, раздел)
+    print(f"   - Legacy added_element: {len(df_legacy)}")
+    print(f"   - New added_element: {len(df_added)}")
+    print(f"   - New modified_element: {len(df_modified)}")
+
+    # 2. Подготовка СТАРЫХ данных (legacy):
+    #    - rename project_name -> project_title к общему стандарту
+    #    - action_type = 'added' (legacy была только для добавленных элементов)
+    if not df_legacy.empty:
+        df_legacy = df_legacy.rename(columns={"project_name": "project_title"})
+        df_legacy["action_type"] = "added"
+        # program_name всегда "Revit" — отбрасываем
+        df_legacy = df_legacy.drop(columns=["program_name"], errors="ignore")
+
+    # 3. Подготовка НОВЫХ added данных:
+    #    - rename cad_program_version -> program_version (общий стандарт)
+    #    - action_type = 'added'
+    if not df_added.empty:
+        df_added = df_added.rename(columns={"cad_program_version": "program_version"})
+        df_added["action_type"] = "added"
+        df_added = df_added.drop(columns=["cad_program_id"], errors="ignore")
+
+    # 4. Подготовка НОВЫХ modified данных (структура идентична added):
+    if not df_modified.empty:
+        df_modified = df_modified.rename(columns={"cad_program_version": "program_version"})
+        df_modified["action_type"] = "modified"
+        df_modified = df_modified.drop(columns=["cad_program_id"], errors="ignore")
+
+    # 5. Объединение всех источников
+    df_combined = pd.concat([df_legacy, df_added, df_modified], ignore_index=True)
+    print(f"   - Итого записей после concat: {len(df_combined)}")
+
+    if df_combined.empty:
+        print("Нет данных для обработки — возвращаем пустой DataFrame")
+        return pd.DataFrame()
+
+    # 6. Подтягиваем данные пользователей из AD (имя, отдел, раздел)
     print("\n2. Join с AD users по user_id...")
-    df = df_added.merge(
+    df = df_combined.merge(
         df_ad[['id', 'display_name', 'department', 'project_section']],
         left_on='user_id',
         right_on='id',
         how='left'
-    ).drop(columns=['id'])
-    
+    ).drop(columns=['id'], errors='ignore')
+
     df.rename(columns={'display_name': 'user_name'}, inplace=True)
-    
+
     matched = df['user_name'].notna().sum()
     print(f"   - Совпало: {matched}/{len(df)} ({matched/len(df)*100:.1f}%)")
-    print(f"   - Отделов: {df['department'].nunique()}")
-    
-    # 3. Названия проекта: короткое и file_storage
+    if 'department' in df.columns:
+        print(f"   - Отделов: {df['department'].nunique()}")
+
+    # 7. Названия проекта: короткое и file_storage (из project_title)
     print("\n3. Создание short_project_name и file_storage_name...")
-    df['short_project_name'] = df['project_name'].apply(extract_short_name)  # K01_AR (первые 2 части)
-    df['file_storage_name'] = df['project_name'].apply(extract_short_project_name)  # K01_AR_2024 (без последней части)
-    
-    # 4. Определение объекта, раздела и стадии проекта
+    df['short_project_name'] = df['project_title'].apply(extract_short_name)
+    df['file_storage_name'] = df['project_title'].apply(extract_short_project_name)
+
+    # 8. Определение объекта, раздела и стадии проекта (из project_title)
     print("\n4. Определение объекта, раздела и стадии...")
-    df['object_name'] = df['project_name'].apply(get_object_name)
+    df['object_name'] = df['project_title'].apply(get_object_name)
     df['project_solution_name'] = df.apply(
-        lambda row: get_project_solution(row['project_name'], row['object_name']), axis=1
+        lambda row: get_project_solution(row['project_title'], row['object_name']), axis=1
     )
     df['project_stage_name'] = df.apply(
-        lambda row: get_project_stage(row['project_name'], row['object_name']), axis=1
+        lambda row: get_project_stage(row['project_title'], row['object_name']), axis=1
     )
     
     print(f"   - Объекты: {df['object_name'].value_counts().to_dict()}")
@@ -432,8 +496,11 @@ def transform_added_elements(
     print(f"   - Установлено мин. время ({MIN_TRANSACTION_SEC} сек) для {session_start_count} начал сессий")
     
     # 10. Формируем итоговый DataFrame
+    # Базовые колонки (есть и в legacy, и в new) + новые из revit-таблиц.
+    # Колонки из revit, которых нет в legacy, будут NaN для legacy-строк.
     result_columns = [
         'date',
+        'action_type',           # NEW: added/modified
         'user_name',
         'department',
         'project_section',
@@ -449,9 +516,18 @@ def transform_added_elements(
         'elements_count',
         'is_bim',
         'time_since_prev_sec',
-        'is_session_start'
+        'is_session_start',
+        # NEW поля из revit.added_element / revit.modified_element (NaN для legacy)
+        'project_path',
+        'group_model',
+        'description',
+        'builtin_category',
+        'family_name',
+        'floor',
+        'element_type_name',
+        'trace_id',
     ]
-    
+
     # Берём только существующие колонки
     result_columns = [col for col in result_columns if col in df.columns]
     df_result = df[result_columns].copy()
