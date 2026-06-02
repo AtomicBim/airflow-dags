@@ -47,8 +47,9 @@ WEIGHT_TOTAL_LAUNCHES = 0.3
     ## Методология:
     
     ### 1. Данные
-    - **AD Users**: справочник пользователей
-    - **Monitoring**: логи запуска плагинов
+    - **AD Users**: справочник пользователей (tim_db_ad)
+    - **Monitoring (new)**: новые логи запуска плагинов из plugins.monitoring (после 2 марта 2026)
+    - **Monitoring (legacy)**: исторические логи из legacy.monitoring_legacy (до 2 марта 2026)
     
     ### 2. Фильтрация
     Исключаются BIM-пользователи (из config.BIM_USERS)
@@ -101,28 +102,50 @@ WEIGHT_TOTAL_LAUNCHES = 0.3
     """
 )
 def plugin_engagement_etl():
-    
+
+    # Connection IDs для node3 (новая инфраструктура после 2 марта 2026)
+    NODE3_REVIT_ID = "tim_db_revit"
+
     # Инициализация путей внутри DAG
     data_root = Path(Variable.get("ETL_DATA_ROOT_PATH", default_var="/tmp/data")) / "plugin_engagement"
     data_root.mkdir(parents=True, exist_ok=True)
-    
+
     # === Extract tasks (параллельно) ===
-    
+
     @task
     def extract_monitoring() -> str:
-        """Извлекает данные мониторинга плагинов из pluginsdb."""
+        """Извлекает НОВЫЙ мониторинг из plugins.monitoring (после 2 марта 2026)."""
         output_path = str(data_root / "monitoring.csv")
         return pluginsdb.extract_monitoring(
-            postgres_conn_id="tim_db_pluginsdb",
+            postgres_conn_id=NODE3_REVIT_ID,
             output_path=output_path
         )
-    
+
+    @task
+    def extract_legacy_monitoring() -> str:
+        """
+        Извлекает СТАРЫЙ мониторинг из legacy.monitoring_legacy (до 2 марта 2026).
+
+        Идемпотентен: если CSV уже выгружен — повторно к БД не обращаемся.
+        Принудительная перевыгрузка: Airflow Variable FORCE_RELOAD_LEGACY_MONITORING=true.
+        """
+        output_path = str(data_root / "monitoring_legacy.csv")
+        force_reload = Variable.get(
+            "FORCE_RELOAD_LEGACY_MONITORING", default_var="false"
+        ).strip().lower() == "true"
+        return pluginsdb.extract_legacy_monitoring(
+            postgres_conn_id=NODE3_REVIT_ID,
+            output_path=output_path,
+            force_reload=force_reload,
+        )
+
     # === Transform task (ждет все extract) ===
-    
+
     @task
     def transform_plugin_engagement_data(
         ad_path: str,
-        monitoring_path: str
+        monitoring_path: str,
+        legacy_monitoring_path: str
     ) -> str:
         """
         Вычисляет Plugin Engagement Score для проектировщиков с разбивкой по дням.
@@ -140,6 +163,7 @@ def plugin_engagement_etl():
         df_engagement = transform_engagement.transform_plugin_engagement(
             ad_path=ad_path,
             monitoring_path=monitoring_path,
+            legacy_monitoring_path=legacy_monitoring_path,
             bim_users=BIM_USERS,
             w1=WEIGHT_UNIQUE_PLUGINS,
             w2=WEIGHT_TOTAL_LAUNCHES
@@ -191,11 +215,13 @@ def plugin_engagement_etl():
     # Extract задачи запускаются параллельно
     ad_csv = extract_ad_users_task(output_path=str(data_root / "ad_users.csv"))
     monitoring_csv = extract_monitoring()
-    
+    legacy_monitoring_csv = extract_legacy_monitoring()
+
     # Transform ждет завершения extract
     engagement_csv = transform_plugin_engagement_data(
         ad_path=ad_csv,
-        monitoring_path=monitoring_csv
+        monitoring_path=monitoring_csv,
+        legacy_monitoring_path=legacy_monitoring_csv
     )
     
     # Load загружает результат в datalake

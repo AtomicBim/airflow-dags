@@ -20,7 +20,29 @@ def extract_ad_users(postgres_conn_id: str, output_path: str, **context) -> str:
 
     return output_path
 
- 
+
+def extract_legacy_monitoring(
+    postgres_conn_id: str,
+    output_path: str,
+    force_reload: bool = False,
+    **context,
+) -> str:
+    """Экспортирует старую таблицу legacy.monitoring_legacy."""
+    if not force_reload and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        print(f"Legacy Monitoring CSV уже существует, пропускаем выгрузку: {output_path}")
+        return output_path
+
+    hook = PostgresHook(postgres_conn_id=postgres_conn_id)
+    conn = hook.get_conn()
+    sql = 'SELECT * FROM legacy.monitoring_legacy'
+    df = pd.read_sql(sql, conn)
+    conn.close()
+
+    df.to_csv(output_path, index=False, encoding='utf-8')
+    print(f"Экспортировано {len(df)} СТАРЫХ записей мониторинга в {output_path}")
+    return output_path
+
+
 def extract_plugins(postgres_conn_id: str, output_path: str, **context) -> str:
     """Экспортирует таблицу plugins.plugin из pluginsdb."""
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
@@ -36,7 +58,7 @@ def extract_plugins(postgres_conn_id: str, output_path: str, **context) -> str:
 
 
 def extract_monitoring(postgres_conn_id: str, output_path: str, **context) -> str:
-    """Экспортирует таблицу plugins.monitoring из pluginsdb."""
+    """Экспортирует новую таблицу plugins.monitoring (после 2 марта 2026)."""
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
     conn = hook.get_conn()
     sql = 'SELECT * FROM plugins.monitoring'
@@ -44,8 +66,44 @@ def extract_monitoring(postgres_conn_id: str, output_path: str, **context) -> st
     conn.close()
 
     df.to_csv(output_path, index=False, encoding='utf-8')
-    print(f"Экспортировано {len(df)} записей мониторинга в {output_path}")
+    print(f"Экспортировано {len(df)} НОВЫХ записей мониторинга в {output_path}")
 
+    return output_path
+
+
+def extract_legacy_monitoring(
+    postgres_conn_id: str,
+    output_path: str,
+    force_reload: bool = False,
+    **context,
+) -> str:
+    """
+    Экспортирует старую таблицу legacy.monitoring_legacy (до 2 марта 2026).
+
+    Эта таблица содержит исторические данные и не пополняется новыми записями,
+    поэтому extract идемпотентен: при повторных запусках возвращается путь к уже
+    выгруженному CSV без обращения к БД.
+
+    Args:
+        postgres_conn_id: ID Airflow connection
+        output_path: Путь к CSV
+        force_reload: Если True — игнорировать существующий файл и выгрузить заново
+
+    Returns:
+        Путь к CSV файлу
+    """
+    if not force_reload and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        print(f"Legacy Monitoring CSV уже существует, пропускаем выгрузку: {output_path}")
+        return output_path
+
+    hook = PostgresHook(postgres_conn_id=postgres_conn_id)
+    conn = hook.get_conn()
+    sql = 'SELECT * FROM legacy.monitoring_legacy'
+    df = pd.read_sql(sql, conn)
+    conn.close()
+
+    df.to_csv(output_path, index=False, encoding='utf-8')
+    print(f"Экспортировано {len(df)} СТАРЫХ записей мониторинга в {output_path}")
     return output_path
 
 

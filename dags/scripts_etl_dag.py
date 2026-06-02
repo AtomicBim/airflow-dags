@@ -34,7 +34,8 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
     **Основной комплексный pipeline**, объединяющий данные из множества источников.
 
     ## Процесс:
-    - Извлекает monitoring, plugins, development_stage, AD users из pluginsdb
+    - Извлекает monitoring (legacy + new), plugins, development_stage, AD users
+    - Объединяет историю мониторинга (до и после 2 марта 2026)
     - Трансформирует и объединяет все данные
     - Загружает результат в datalake:
       - ext_scripts_analytics_designers
@@ -47,15 +48,37 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
 )
 def scripts_etl():
 
+    # Connection IDs для node3 (новая инфраструктура после 2 марта 2026)
+    NODE3_REVIT_ID = "tim_db_revit"
+    PLUGINSDB_ID = "tim_db_pluginsdb"
+
     # === Extract tasks (параллельно) ===
 
     @task
     def extract_monitoring() -> str:
-        """Извлекает мониторинг из pluginsdb."""
+        """Извлекает НОВЫЙ мониторинг из plugins.monitoring (после 2 марта 2026)."""
         output_path = str(DATA_ROOT / "tim_export_monitoring.csv")
         return pluginsdb.extract_monitoring(
-            postgres_conn_id="tim_db_pluginsdb",
+            postgres_conn_id=NODE3_REVIT_ID,
             output_path=output_path
+        )
+
+    @task
+    def extract_legacy_monitoring() -> str:
+        """
+        Извлекает СТАРЫЙ мониторинг из legacy.monitoring_legacy (до 2 марта 2026).
+
+        Идемпотентен: если CSV уже выгружен — повторно к БД не обращаемся.
+        Принудительная перевыгрузка: Airflow Variable FORCE_RELOAD_LEGACY_MONITORING=true.
+        """
+        output_path = str(DATA_ROOT / "tim_export_monitoring_legacy.csv")
+        force_reload = Variable.get(
+            "FORCE_RELOAD_LEGACY_MONITORING", default_var="false"
+        ).strip().lower() == "true"
+        return pluginsdb.extract_legacy_monitoring(
+            postgres_conn_id=NODE3_REVIT_ID,
+            output_path=output_path,
+            force_reload=force_reload,
         )
 
     @task
@@ -63,7 +86,7 @@ def scripts_etl():
         """Извлекает стадии разработки из pluginsdb."""
         output_path = str(DATA_ROOT / "tim_export_plugin_development_stage.csv")
         return pluginsdb.extract_development_stage(
-            postgres_conn_id="tim_db_pluginsdb",
+            postgres_conn_id=PLUGINSDB_ID,
             output_path=output_path
         )
 
@@ -75,6 +98,7 @@ def scripts_etl():
         ad_path: str,
         plugin_path: str,
         monitoring_path: str,
+        legacy_monitoring_path: str,
         plugin_development_stage_path: str
     ) -> dict:
         """Трансформирует все данные для scripts analytics."""
@@ -82,6 +106,7 @@ def scripts_etl():
             ad_path=ad_path,
             plugin_path=plugin_path,
             monitoring_path=monitoring_path,
+            legacy_monitoring_path=legacy_monitoring_path,
             plugin_development_stage_path=plugin_development_stage_path
         )
 
@@ -147,6 +172,7 @@ def scripts_etl():
     ad_csv = extract_ad_users_task(output_path=str(DATA_ROOT / "tim_export_ad_user.csv"))
     plugin_csv = extract_plugins_task(output_path=str(DATA_ROOT / "tim_export_plugin.csv"))
     monitoring_csv = extract_monitoring()
+    legacy_monitoring_csv = extract_legacy_monitoring()
     dev_stage_csv = extract_development_stage()
 
     # Transform ждет все extract
@@ -154,6 +180,7 @@ def scripts_etl():
         ad_path=ad_csv,
         plugin_path=plugin_csv,
         monitoring_path=monitoring_csv,
+        legacy_monitoring_path=legacy_monitoring_csv,
         plugin_development_stage_path=dev_stage_csv,
     )
 
