@@ -58,10 +58,10 @@ def extract_plugins(postgres_conn_id: str, output_path: str, **context) -> str:
 
 
 def extract_monitoring(postgres_conn_id: str, output_path: str, **context) -> str:
-    """Экспортирует новую таблицу plugins.monitoring (после 2 марта 2026)."""
+    """Экспортирует новую таблицу revit.plugin_launch (после 2 марта 2026)."""
     hook = PostgresHook(postgres_conn_id=postgres_conn_id)
     conn = hook.get_conn()
-    sql = 'SELECT * FROM plugins.monitoring'
+    sql = 'SELECT * FROM revit.plugin_launch'
     df = pd.read_sql(sql, conn)
     conn.close()
 
