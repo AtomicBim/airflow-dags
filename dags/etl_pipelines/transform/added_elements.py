@@ -365,16 +365,28 @@ def transform_added_elements(
         print("Нет данных для обработки — возвращаем пустой DataFrame")
         return pd.DataFrame()
 
-    # 6. Подтягиваем данные пользователей из AD (имя, отдел, раздел)
+    # 6. Подтягиваем данные пользователей из AD (имя, отдел, раздел).
+    # Берём только реально существующие колонки в AD — имя поля раздела может быть
+    # либо 'project_section', либо 'project_doc_section' в зависимости от среды.
     print("\n2. Join с AD users по user_id...")
+    ad_candidates = ['id', 'display_name', 'department', 'project_section', 'project_doc_section', 'company']
+    ad_columns_available = [c for c in ad_candidates if c in df_ad.columns]
+    missing = set(ad_candidates) - set(ad_columns_available)
+    if missing:
+        print(f"   - Колонки AD не найдены и пропущены: {sorted(missing)}")
+
     df = df_combined.merge(
-        df_ad[['id', 'display_name', 'department', 'project_section']],
+        df_ad[ad_columns_available],
         left_on='user_id',
         right_on='id',
         how='left'
     ).drop(columns=['id'], errors='ignore')
 
     df.rename(columns={'display_name': 'user_name'}, inplace=True)
+
+    # Унифицируем имя колонки раздела: project_doc_section -> project_section
+    if 'project_doc_section' in df.columns and 'project_section' not in df.columns:
+        df.rename(columns={'project_doc_section': 'project_section'}, inplace=True)
 
     matched = df['user_name'].notna().sum()
     print(f"   - Совпало: {matched}/{len(df)} ({matched/len(df)*100:.1f}%)")
