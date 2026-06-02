@@ -81,18 +81,30 @@ def transform_plugin_engagement(
     print(f"   - New записей мониторинга: {len(df_monitoring_new)}")
     print(f"   - BIM-пользователей для фильтрации: {len(bim_users)}")
 
-    # 2. Подготовка СТАРЫХ данных: переименование колонок к общему стандарту.
-    # В legacy уже есть user_display_name и username, поэтому AD не подключаем.
+    # 2. Подготовка СТАРЫХ данных:
+    #    - rename колонок к общему стандарту (launch_date -> date и т.д.)
+    #    - enrichment через AD по display_name (т.к. в legacy нет user_id GUID)
     df_monitoring_legacy = df_monitoring_legacy.rename(columns={
         "project_name": "project_title",
-        "user_display_name": "display_name"
+        "user_display_name": "display_name",
+        "launch_date": "date",
     })
 
+    # Собираем колонки AD для enrichment'а legacy.
+    ad_legacy_candidates = ['display_name', 'email', 'company', 'department', 'project_section', 'project_doc_section']
+    ad_legacy_columns = [c for c in ad_legacy_candidates if c in df_ad.columns]
+    # Дедуп по display_name на случай тёзок (берем первое вхождение)
+    df_ad_for_legacy = df_ad[ad_legacy_columns].drop_duplicates(subset="display_name").copy()
+    df_monitoring_legacy = df_monitoring_legacy.merge(
+        df_ad_for_legacy,
+        how="left",
+        on="display_name",
+    )
+
     # 3. Подготовка НОВЫХ данных: JOIN с AD по user_id, чтобы получить ФИО и доп. поля.
-    # В AD колонки могут отличаться по проекту, поэтому собираем доступные.
-    ad_join_candidates = ['email', 'display_name', 'company', 'department', 'project_section', 'project_doc_section']
-    ad_columns_available = ['id'] + [c for c in ad_join_candidates if c in df_ad.columns]
-    df_ad_clean = df_ad[ad_columns_available].copy()
+    ad_new_candidates = ['email', 'display_name', 'company', 'department', 'project_section', 'project_doc_section']
+    ad_new_columns = ['id'] + [c for c in ad_new_candidates if c in df_ad.columns]
+    df_ad_clean = df_ad[ad_new_columns].copy()
 
     df_monitoring_new = df_monitoring_new.merge(
         df_ad_clean,

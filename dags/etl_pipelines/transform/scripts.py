@@ -39,13 +39,26 @@ def transform_scripts_analytics(
     df_monitoring_legacy = pd.read_csv(legacy_monitoring_path)
     df_monitoring_new = pd.read_csv(monitoring_path)
 
-    # 2. Подготовка СТАРЫХ данных мониторинга
-    # В старой таблице уже есть user_display_name и username — JOIN с AD не нужен.
-    # Приводим названия колонок к общему стандарту.
+    # 2. Подготовка СТАРЫХ данных мониторинга:
+    #    - rename колонок к общему стандарту (launch_date -> date, project_name -> project_title и т.д.)
+    #    - enrichment через AD по display_name (т.к. в legacy нет user_id GUID)
     df_monitoring_legacy = df_monitoring_legacy.rename(columns={
         "project_name": "project_title",
-        "user_display_name": "display_name"
+        "user_display_name": "display_name",
+        "launch_date": "date",
     })
+
+    # Дедуп AD по display_name на случай тёзок (берем первое вхождение)
+    df_ad_for_legacy = (
+        df_ad[["display_name", "email", "department", "company"]]
+        .drop_duplicates(subset="display_name")
+        .copy()
+    )
+    df_monitoring_legacy = df_monitoring_legacy.merge(
+        df_ad_for_legacy,
+        how="left",
+        on="display_name",
+    )
 
     # 3. Подготовка НОВЫХ данных мониторинга (JOIN с AD по user_id)
     df_ad_clean = df_ad[["id", "display_name", "email", "department", "company"]].copy()
@@ -102,11 +115,14 @@ def transform_scripts_analytics(
     ], errors='ignore')
 
     # === Merge monitoring + plugin ===
+    # В обоих таблицах есть колонка display_name (у пользователя и у плагина),
+    # поэтому используем суффиксы _user / _plugin вместо стандартных _x / _y.
     df_monitoring = df_monitoring.merge(
         df_plugin,
         left_on='plugin_id',
         right_on='id',
-        how='left'
+        how='left',
+        suffixes=('_user', '_plugin'),
     ).drop(columns=['id'], errors='ignore')
 
     # === Заполнение пропусков ===
