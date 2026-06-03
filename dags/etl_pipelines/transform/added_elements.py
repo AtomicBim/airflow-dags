@@ -337,25 +337,37 @@ def transform_added_elements(
     # 2. Подготовка СТАРЫХ данных (legacy):
     #    - rename project_name -> project_title к общему стандарту
     #    - action_type = 'added' (legacy была только для добавленных элементов)
+    #    - берем данные СТРОГО ДО 2 марта 2026
     if not df_legacy.empty:
         df_legacy = df_legacy.rename(columns={"project_name": "project_title"})
         df_legacy["action_type"] = "added"
         # program_name всегда "Revit" — отбрасываем
         df_legacy = df_legacy.drop(columns=["program_name"], errors="ignore")
+        if "date" in df_legacy.columns:
+            df_legacy["date"] = pd.to_datetime(df_legacy["date"], errors="coerce")
+            df_legacy = df_legacy[df_legacy["date"] < "2026-03-02"]
 
     # 3. Подготовка НОВЫХ added данных:
     #    - rename cad_program_version -> program_version (общий стандарт)
     #    - action_type = 'added'
+    #    - берем данные НАЧИНАЯ с 2 марта 2026
     if not df_added.empty:
         df_added = df_added.rename(columns={"cad_program_version": "program_version"})
         df_added["action_type"] = "added"
         df_added = df_added.drop(columns=["cad_program_id"], errors="ignore")
+        if "date" in df_added.columns:
+            df_added["date"] = pd.to_datetime(df_added["date"], errors="coerce")
+            df_added = df_added[df_added["date"] >= "2026-03-02"]
 
     # 4. Подготовка НОВЫХ modified данных (структура идентична added):
+    #    - берем данные НАЧИНАЯ с 2 марта 2026
     if not df_modified.empty:
         df_modified = df_modified.rename(columns={"cad_program_version": "program_version"})
         df_modified["action_type"] = "modified"
         df_modified = df_modified.drop(columns=["cad_program_id"], errors="ignore")
+        if "date" in df_modified.columns:
+            df_modified["date"] = pd.to_datetime(df_modified["date"], errors="coerce")
+            df_modified = df_modified[df_modified["date"] >= "2026-03-02"]
 
     # 5. Объединение всех источников
     df_combined = pd.concat([df_legacy, df_added, df_modified], ignore_index=True)

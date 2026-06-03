@@ -113,6 +113,20 @@ def transform_plugin_engagement(
         right_on="id"
     ).drop(columns=["id"], errors="ignore")
 
+    # 3.5 Фильтрация: legacy строго до 2 марта, new начиная с 2 марта
+    # В legacy дата уже переименована в 'date' (строка 90)
+    if "date" in df_monitoring_legacy.columns:
+        df_monitoring_legacy["date"] = pd.to_datetime(df_monitoring_legacy["date"], errors="coerce")
+        df_monitoring_legacy = df_monitoring_legacy[df_monitoring_legacy["date"] < "2026-03-02"]
+
+    # Ищем колонку с датой в новых данных мониторинга
+    date_columns_search = ['date', 'launch_date', 'created_at', 'timestamp', 'created', 'datetime']
+    new_date_col = next((c for c in date_columns_search if c in df_monitoring_new.columns), None)
+    
+    if new_date_col:
+        df_monitoring_new[new_date_col] = pd.to_datetime(df_monitoring_new[new_date_col], errors="coerce")
+        df_monitoring_new = df_monitoring_new[df_monitoring_new[new_date_col] >= "2026-03-02"]
+
     # 4. Объединение СТАРЫХ и НОВЫХ данных
     df_monitoring = pd.concat([df_monitoring_legacy, df_monitoring_new], ignore_index=True)
     print(f"   - Объединенных записей мониторинга: {len(df_monitoring)}")
