@@ -483,6 +483,20 @@ def transform_added_elements(
     # безопасно использовать df.loc[idx, ...] без коллизий с исходным индексом.
     df = df.sort_values(['user_name', 'date']).reset_index(drop=True)
 
+    # Помечаем строки-дубликаты по timestamp в пределах user_name.
+    # Revit пишет одну транзакцию, затрагивающую N элементов разных категорий
+    # (builtin_category, element_type_name, floor), как N строк с идентичным date.
+    # diff() для таких строк = 0 секунд (что физически верно: они одновременны),
+    # НО без этого флага они ниже попадают под условие is_session_start = (time == 0)
+    # и получают MIN_TRANSACTION_SEC секунд каждая → раздувание "времени работы"
+    # на ~30 сек × (число дубль-строк). Флаг используется только в формуле
+    # is_session_start ниже; elements_count у каждой строки остаётся как есть,
+    # поэтому SUM(elements_count) корректно показывает реальное число элементов.
+    df['_is_dup_ts'] = df.duplicated(subset=['user_name', 'date'], keep='first')
+    dup_ts_count = int(df['_is_dup_ts'].sum())
+    if dup_ts_count > 0:
+        print(f"   - Дубль-строк по timestamp (одна транзакция → несколько элементов): {dup_ts_count}")
+
     # Время до предыдущей транзакции в секундах (в пределах user_name)
     df['time_since_prev_sec'] = (
         df.groupby('user_name')['date'].diff().dt.total_seconds()
@@ -535,28 +549,40 @@ def transform_added_elements(
     
     # Первая транзакция пользователя (без предыдущей в datalake) = NaN, заполняем 0
     df['time_since_prev_sec'] = df['time_since_prev_sec'].fillna(0)
-    
-    # Флаг "начало сессии" если разрыв > SESSION_GAP_SECONDS или первая транзакция
-    df['is_session_start'] = (df['time_since_prev_sec'] > SESSION_GAP_SECONDS) | (df['time_since_prev_sec'] == 0)
-    
+
+    # Флаг "начало сессии" если разрыв > SESSION_GAP_SECONDS или первая транзакция.
+    # Дубль-строки по timestamp (одна транзакция Revit, несколько затронутых элементов)
+    # ИСКЛЮЧАЕМ: у них time_since=0, но это не «новая сессия», а тот же момент времени.
+    # Без этой защиты каждая дубль-строка получала бы MIN_TRANSACTION_SEC секунд ниже,
+    # что искусственно раздувало бы суммарное «время работы».
+    df['is_session_start'] = (
+        (df['time_since_prev_sec'] > SESSION_GAP_SECONDS)
+        | (df['time_since_prev_sec'] == 0)
+    ) & ~df['_is_dup_ts']
+
     # Статистика по интервалам ДО обнуления пауз
     active_intervals = df[(df['time_since_prev_sec'] > 0) & (df['time_since_prev_sec'] <= SESSION_GAP_SECONDS)]['time_since_prev_sec']
     if len(active_intervals) > 0:
         print(f"   - Средний активный интервал: {active_intervals.mean():.1f} сек")
         print(f"   - Медианный активный интервал: {active_intervals.median():.1f} сек")
     print(f"   - Сессий (разрыв > {SESSION_GAP_SECONDS} сек): {df['is_session_start'].sum()}")
-    
+
     # Обнуляем большие интервалы (паузы > SESSION_GAP_SECONDS = не работа)
     # Это позволяет в DataLens просто суммировать time_since_prev_sec для получения времени работы
     pause_count = (df['time_since_prev_sec'] > SESSION_GAP_SECONDS).sum()
     df.loc[df['time_since_prev_sec'] > SESSION_GAP_SECONDS, 'time_since_prev_sec'] = 0
     print(f"   - Обнулено пауз (> {SESSION_GAP_SECONDS} сек): {pause_count}")
-    
+
     # Устанавливаем минимальное время для первых транзакций сессий
-    # Компенсирует потерю времени ДО первого действия в сессии
+    # Компенсирует потерю времени ДО первого действия в сессии.
+    # Благодаря фильтру ~_is_dup_ts выше дубль-строки сюда не попадают:
+    # их time_since_prev_sec остаётся 0 секунд (они одновременны с предыдущей).
     session_start_count = df['is_session_start'].sum()
     df.loc[df['is_session_start'], 'time_since_prev_sec'] = MIN_TRANSACTION_SEC
     print(f"   - Установлено мин. время ({MIN_TRANSACTION_SEC} сек) для {session_start_count} начал сессий")
+
+    # Технический флаг больше не нужен — удаляем перед формированием итогового DataFrame.
+    df = df.drop(columns=['_is_dup_ts'])
     
     # 10. Формируем итоговый DataFrame
     # Базовые колонки (есть и в legacy, и в new) + новые из revit-таблиц.
