@@ -345,7 +345,7 @@ def transform_added_elements(
         df_legacy = df_legacy.drop(columns=["program_name"], errors="ignore")
         if "date" in df_legacy.columns:
             df_legacy["date"] = pd.to_datetime(df_legacy["date"], errors="coerce")
-            df_legacy = df_legacy[df_legacy["date"] < "2026-02-04"]
+            df_legacy = df_legacy[df_legacy["date"] < "2026-02-14"]
 
     # 3. Подготовка НОВЫХ added данных:
     #    - rename cad_program_version -> program_version (общий стандарт)
@@ -357,7 +357,7 @@ def transform_added_elements(
         df_added = df_added.drop(columns=["cad_program_id"], errors="ignore")
         if "date" in df_added.columns:
             df_added["date"] = pd.to_datetime(df_added["date"], errors="coerce")
-            df_added = df_added[df_added["date"] >= "2026-02-04"]
+            df_added = df_added[df_added["date"] >= "2026-02-14"]
 
     # 4. Подготовка НОВЫХ modified данных (структура идентична added):
     #    - берем данные НАЧИНАЯ с 2 марта 2026
@@ -367,7 +367,7 @@ def transform_added_elements(
         df_modified = df_modified.drop(columns=["cad_program_id"], errors="ignore")
         if "date" in df_modified.columns:
             df_modified["date"] = pd.to_datetime(df_modified["date"], errors="coerce")
-            df_modified = df_modified[df_modified["date"] >= "2026-02-04"]
+            df_modified = df_modified[df_modified["date"] >= "2026-02-14"]
 
     # 5. Объединение всех источников
     df_combined = pd.concat([df_legacy, df_added, df_modified], ignore_index=True)
@@ -438,7 +438,14 @@ def transform_added_elements(
     
     print(f"   - Категории: {df['class'].value_counts().to_dict()}")
     print(f"   - Плагины: {df['is_plugin'].sum()} записей")
-    
+
+    # Приведение program_version к nullable Int64.
+    # Для legacy-строк значение отсутствует (NaN). Если оставить как есть,
+    # pandas хранит "int + NaN" как float64, и to_csv пишет "2022.0" вместо "2022",
+    # что несовместимо с BIGINT-колонкой Postgres при COPY.
+    if 'program_version' in df.columns:
+        df['program_version'] = pd.to_numeric(df['program_version'], errors='coerce').astype('Int64')
+
     # 7. Подсчёт количества элементов
     print("\n7. Подсчёт элементов...")
     df['elements_count'] = df['element_ids'].apply(count_elements)

@@ -224,7 +224,15 @@ def added_elements_etl():
             print("Нет данных designers для загрузки")
             return 0
 
-        df = pd.read_csv(paths["designers_path"], encoding='utf-8')
+        # low_memory=False — устраняет DtypeWarning по новым revit-полям, которые
+        # NaN для legacy-строк и текст для new. dtype для program_version сохраняет
+        # nullable Int64 через цикл чтения/записи (иначе float64 → "2022.0" → BIGINT error).
+        df = pd.read_csv(
+            paths["designers_path"],
+            encoding='utf-8',
+            low_memory=False,
+            dtype={'program_version': 'Int64'},
+        )
 
         if df.empty:
             print("DataFrame designers пустой")
@@ -245,7 +253,13 @@ def added_elements_etl():
             print("Нет данных BIM для загрузки")
             return 0
 
-        df = pd.read_csv(paths["bim_path"], encoding='utf-8')
+        # См. комментарий в load_designers — те же причины.
+        df = pd.read_csv(
+            paths["bim_path"],
+            encoding='utf-8',
+            low_memory=False,
+            dtype={'program_version': 'Int64'},
+        )
 
         if df.empty:
             print("DataFrame BIM пустой")
