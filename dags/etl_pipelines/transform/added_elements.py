@@ -29,6 +29,11 @@ SESSION_GAP_SECONDS = 900  # 15 минут
 # Компенсирует потерю времени ДО первого действия
 MIN_TRANSACTION_SEC = 30  # 30 секунд
 
+# Граница перехода legacy -> new (revit.added_element / revit.modified_element).
+# Записи с date < LEGACY_CUTOFF_DATE берутся из legacy.added_element_legacy,
+# записи с date >= LEGACY_CUTOFF_DATE — из новых revit-таблиц.
+LEGACY_CUTOFF_DATE = "2026-02-14"
+
 # Путь к CSV файлу с маппингом транзакций (относительно корня проекта)
 MAPPING_CSV_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
@@ -228,11 +233,12 @@ def _fetch_last_user_transactions(
     users: list
 ) -> Optional[pd.DataFrame]:
     """
-    Подгружает последнюю транзакцию каждой пары (user_name, action_type) из datalake.
+    Подгружает последнюю транзакцию каждого пользователя из datalake.
     Используется для корректного расчёта time_since_prev_sec на границе инкрементальных порций.
 
-    Партиционирование по (user_name, action_type) нужно, потому что added и modified
-    в transform считаются независимыми цепочками транзакций (см. transform_added_elements).
+    Транзакции считаются единой хронологической цепочкой по пользователю независимо от
+    action_type (added/modified), потому что одно действие пользователя = одна транзакция
+    (added и modified взаимоисключающие в пределах одного timestamp).
 
     Args:
         postgres_conn_id: ID Airflow connection для PostgreSQL
@@ -240,7 +246,7 @@ def _fetch_last_user_transactions(
         users: Список пользователей из новой порции
 
     Returns:
-        DataFrame с колонками [prev_date, user_name, action_type] или None если ошибка/пусто
+        DataFrame с колонками [prev_date, user_name] или None если ошибка/пусто
     """
     from airflow.providers.postgres.hooks.postgres import PostgresHook
 
@@ -255,29 +261,30 @@ def _fetch_last_user_transactions(
         users_escaped = [u.replace("'", "''") for u in users if u]
         users_str = "', '".join(users_escaped)
 
-        # Подгружаем последнюю транзакцию каждой пары (user_name, action_type) ДО min_date.
+        # Подгружаем последнюю транзакцию каждого пользователя ДО min_date
+        # (без разделения по action_type — единая цепочка действий).
         # Объединяем обе таблицы (designers и bim).
         sql = f"""
             WITH all_data AS (
-                SELECT "date", "user_name", "action_type"
+                SELECT "date", "user_name"
                 FROM datalake.ext_added_elements_designers
                 WHERE "date" < '{min_date_str}'
                   AND "user_name" IN ('{users_str}')
                 UNION ALL
-                SELECT "date", "user_name", "action_type"
+                SELECT "date", "user_name"
                 FROM datalake.ext_added_elements_bim
                 WHERE "date" < '{min_date_str}'
                   AND "user_name" IN ('{users_str}')
             ),
             ranked AS (
-                SELECT "date", "user_name", "action_type",
+                SELECT "date", "user_name",
                        ROW_NUMBER() OVER (
-                           PARTITION BY "user_name", "action_type"
+                           PARTITION BY "user_name"
                            ORDER BY "date" DESC
                        ) as rn
                 FROM all_data
             )
-            SELECT "date" as prev_date, "user_name", "action_type"
+            SELECT "date" as prev_date, "user_name"
             FROM ranked
             WHERE rn = 1
         """
@@ -308,9 +315,9 @@ def transform_added_elements(
     Трансформирует данные о добавленных и модифицированных элементах.
 
     Объединяет 3 источника:
-    - legacy.added_element_legacy (до 2 марта 2026) — action_type='added'
-    - revit.added_element (после 2 марта 2026) — action_type='added'
-    - revit.modified_element (после 2 марта 2026) — action_type='modified'
+    - legacy.added_element_legacy (до 14 февраля 2026) — action_type='added'
+    - revit.added_element (с 14 февраля 2026) — action_type='added'
+    - revit.modified_element (с 14 февраля 2026) — action_type='modified'
 
     Args:
         ad_path: Путь к CSV с данными AD пользователей
@@ -343,7 +350,7 @@ def transform_added_elements(
     # 2. Подготовка СТАРЫХ данных (legacy):
     #    - rename project_name -> project_title к общему стандарту
     #    - action_type = 'added' (legacy была только для добавленных элементов)
-    #    - берем данные СТРОГО ДО 2 марта 2026
+    #    - берем данные СТРОГО ДО 14 февраля 2026
     if not df_legacy.empty:
         df_legacy = df_legacy.rename(columns={"project_name": "project_title"})
         df_legacy["action_type"] = "added"
@@ -351,29 +358,29 @@ def transform_added_elements(
         df_legacy = df_legacy.drop(columns=["program_name"], errors="ignore")
         if "date" in df_legacy.columns:
             df_legacy["date"] = pd.to_datetime(df_legacy["date"], errors="coerce")
-            df_legacy = df_legacy[df_legacy["date"] < "2026-02-14"]
+            df_legacy = df_legacy[df_legacy["date"] < LEGACY_CUTOFF_DATE]
 
     # 3. Подготовка НОВЫХ added данных:
     #    - rename cad_program_version -> program_version (общий стандарт)
     #    - action_type = 'added'
-    #    - берем данные НАЧИНАЯ с 2 марта 2026
+    #    - берем данные НАЧИНАЯ с 14 февраля 2026
     if not df_added.empty:
         df_added = df_added.rename(columns={"cad_program_version": "program_version"})
         df_added["action_type"] = "added"
         df_added = df_added.drop(columns=["cad_program_id"], errors="ignore")
         if "date" in df_added.columns:
             df_added["date"] = pd.to_datetime(df_added["date"], errors="coerce")
-            df_added = df_added[df_added["date"] >= "2026-02-14"]
+            df_added = df_added[df_added["date"] >= LEGACY_CUTOFF_DATE]
 
     # 4. Подготовка НОВЫХ modified данных (структура идентична added):
-    #    - берем данные НАЧИНАЯ с 2 марта 2026
+    #    - берем данные НАЧИНАЯ с 14 февраля 2026
     if not df_modified.empty:
         df_modified = df_modified.rename(columns={"cad_program_version": "program_version"})
         df_modified["action_type"] = "modified"
         df_modified = df_modified.drop(columns=["cad_program_id"], errors="ignore")
         if "date" in df_modified.columns:
             df_modified["date"] = pd.to_datetime(df_modified["date"], errors="coerce")
-            df_modified = df_modified[df_modified["date"] >= "2026-02-14"]
+            df_modified = df_modified[df_modified["date"] >= LEGACY_CUTOFF_DATE]
 
     # 5. Объединение всех источников
     df_combined = pd.concat([df_legacy, df_added, df_modified], ignore_index=True)
@@ -463,27 +470,22 @@ def transform_added_elements(
     print("\n8. Классификация пользователей...")
     df['is_bim'] = df['user_name'].isin(BIM_USERS)
     
-    # 9. Расчёт времени между транзакциями (в пределах пользователя × action_type).
+    # 9. Расчёт времени между транзакциями (единая цепочка по пользователю).
     # Без группировки по дню — корректно считает ночную работу через полночь.
     #
-    # ВАЖНО: группируем по (user_name, action_type), потому что added и modified
-    # пишутся в БД независимыми потоками. Если их перемешать в одну цепочку,
-    # diff() будет учитывать "ложные" соседства между added и modified-транзакциями,
-    # из-за чего time_since_prev_sec становится меньше реального.
-    # Таким образом added (вместе с legacy, у которой action_type='added')
-    # и modified получают независимые сессионные расчёты.
-    #
-    # NB: при сложении time_since_prev_sec в BI учитывайте, что added и modified —
-    # параллельные цепочки. Для оценки "времени работы" суммируйте по одному action_type
-    # либо берите максимум по дате/пользователю, иначе возможен двойной учёт.
-    print("\n9. Расчёт времени между транзакциями (по user_name × action_type)...")
+    # ВАЖНО: считаем единую хронологическую цепочку по user_name (без action_type),
+    # потому что одно действие пользователя = одна транзакция Revit (либо added,
+    # либо modified — взаимоисключающие). Разделение на параллельные цепочки
+    # added/modified приводило бы к двойному учёту времени при SUM в дашборде.
+    print("\n9. Расчёт времени между транзакциями (единая цепочка по user_name)...")
 
-    # Сортируем по пользователю, action_type и времени
-    df = df.sort_values(['user_name', 'action_type', 'date'])
+    # Сортируем по пользователю и времени; сбрасываем индекс, чтобы дальше
+    # безопасно использовать df.loc[idx, ...] без коллизий с исходным индексом.
+    df = df.sort_values(['user_name', 'date']).reset_index(drop=True)
 
-    # Время до предыдущей транзакции в секундах (в пределах user × action_type)
+    # Время до предыдущей транзакции в секундах (в пределах user_name)
     df['time_since_prev_sec'] = (
-        df.groupby(['user_name', 'action_type'])['date'].diff().dt.total_seconds()
+        df.groupby('user_name')['date'].diff().dt.total_seconds()
     )
 
     # Подгружаем последние транзакции из datalake для корректного расчёта на границе порций
@@ -495,32 +497,41 @@ def transform_added_elements(
         df_prev = _fetch_last_user_transactions(postgres_conn_id, min_date, users)
 
         if df_prev is not None and not df_prev.empty:
-            print(f"   - Найдено {len(df_prev)} предыдущих транзакций (по user × action_type)")
+            print(f"   - Найдено {len(df_prev)} предыдущих транзакций (по user_name)")
 
-            # Находим первые транзакции каждой пары (user_name, action_type) в порции,
+            # Находим первые транзакции каждого пользователя в порции,
             # где time_since_prev_sec = NaN (нет предшественника внутри батча).
             first_trans_mask = df['time_since_prev_sec'].isna()
 
             if first_trans_mask.any():
                 # Для первых транзакций подставляем интервал от последней транзакции
-                # из datalake той же пары (user_name, action_type).
-                df_first = df[first_trans_mask][['user_name', 'action_type', 'date']].copy()
-                df_first = df_first.merge(df_prev, on=['user_name', 'action_type'], how='left')
+                # того же пользователя из datalake.
+                # Сохраняем исходный индекс df в отдельной колонке, потому что merge
+                # сбрасывает индекс — без этого df.loc[idx, ...] адресовал бы
+                # неверные строки оригинального DataFrame.
+                df_first = df.loc[first_trans_mask, ['user_name', 'date']].copy()
+                df_first['_orig_idx'] = df_first.index
+                df_first = df_first.merge(df_prev, on='user_name', how='left')
 
                 # Рассчитываем интервал от предыдущей транзакции из datalake
                 df_first['corrected_interval'] = (
                     df_first['date'] - df_first['prev_date']
                 ).dt.total_seconds()
 
-                # Обновляем интервалы в основном DataFrame (только если <= SESSION_GAP_SECONDS)
-                corrected_count = 0
-                for idx, row in df_first.iterrows():
-                    interval = row.get('corrected_interval')
-                    if pd.notna(interval) and interval <= SESSION_GAP_SECONDS:
-                        df.loc[idx, 'time_since_prev_sec'] = interval
-                        corrected_count += 1
+                # Векторизованное обновление по исходным индексам df.
+                # Берём только интервалы внутри одной сессии (<= SESSION_GAP_SECONDS),
+                # большие разрывы оставляем как NaN — пусть считаются началом новой сессии.
+                valid_mask = (
+                    df_first['corrected_interval'].notna()
+                    & (df_first['corrected_interval'] <= SESSION_GAP_SECONDS)
+                )
+                if valid_mask.any():
+                    df.loc[
+                        df_first.loc[valid_mask, '_orig_idx'].values,
+                        'time_since_prev_sec'
+                    ] = df_first.loc[valid_mask, 'corrected_interval'].values
 
-                print(f"   - Скорректировано интервалов: {corrected_count}")
+                print(f"   - Скорректировано интервалов: {int(valid_mask.sum())}")
     
     # Первая транзакция пользователя (без предыдущей в datalake) = NaN, заполняем 0
     df['time_since_prev_sec'] = df['time_since_prev_sec'].fillna(0)
