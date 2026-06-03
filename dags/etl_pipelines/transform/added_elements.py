@@ -228,63 +228,69 @@ def _fetch_last_user_transactions(
     users: list
 ) -> Optional[pd.DataFrame]:
     """
-    Подгружает последнюю транзакцию каждого пользователя из datalake.
+    Подгружает последнюю транзакцию каждой пары (user_name, action_type) из datalake.
     Используется для корректного расчёта time_since_prev_sec на границе инкрементальных порций.
-    
+
+    Партиционирование по (user_name, action_type) нужно, потому что added и modified
+    в transform считаются независимыми цепочками транзакций (см. transform_added_elements).
+
     Args:
         postgres_conn_id: ID Airflow connection для PostgreSQL
         min_date: Минимальная дата из новой порции данных
         users: Список пользователей из новой порции
-    
+
     Returns:
-        DataFrame с последними транзакциями или None если ошибка/пусто
+        DataFrame с колонками [prev_date, user_name, action_type] или None если ошибка/пусто
     """
     from airflow.providers.postgres.hooks.postgres import PostgresHook
-    
+
     try:
         hook = PostgresHook(postgres_conn_id=postgres_conn_id)
         conn = hook.get_conn()
-        
+
         # Форматируем дату для SQL
         min_date_str = min_date.strftime('%Y-%m-%d %H:%M:%S')
-        
+
         # Форматируем список пользователей для SQL IN clause
         users_escaped = [u.replace("'", "''") for u in users if u]
         users_str = "', '".join(users_escaped)
-        
-        # Подгружаем последнюю транзакцию каждого пользователя ДО min_date
-        # Объединяем обе таблицы (designers и bim)
+
+        # Подгружаем последнюю транзакцию каждой пары (user_name, action_type) ДО min_date.
+        # Объединяем обе таблицы (designers и bim).
         sql = f"""
             WITH all_data AS (
-                SELECT "date", "user_name"
+                SELECT "date", "user_name", "action_type"
                 FROM datalake.ext_added_elements_designers
                 WHERE "date" < '{min_date_str}'
                   AND "user_name" IN ('{users_str}')
                 UNION ALL
-                SELECT "date", "user_name"
+                SELECT "date", "user_name", "action_type"
                 FROM datalake.ext_added_elements_bim
                 WHERE "date" < '{min_date_str}'
                   AND "user_name" IN ('{users_str}')
             ),
             ranked AS (
-                SELECT "date", "user_name",
-                       ROW_NUMBER() OVER (PARTITION BY "user_name" ORDER BY "date" DESC) as rn
+                SELECT "date", "user_name", "action_type",
+                       ROW_NUMBER() OVER (
+                           PARTITION BY "user_name", "action_type"
+                           ORDER BY "date" DESC
+                       ) as rn
                 FROM all_data
             )
-            SELECT "date" as prev_date, "user_name"
-            FROM ranked 
+            SELECT "date" as prev_date, "user_name", "action_type"
+            FROM ranked
             WHERE rn = 1
         """
-        
+
         df_prev = pd.read_sql(sql, conn)
         conn.close()
-        
+
         if df_prev.empty:
             return None
-        
+
         df_prev['prev_date'] = pd.to_datetime(df_prev['prev_date'])
         return df_prev
-        
+
     except Exception as e:
         print(f"   - Не удалось подгрузить предыдущие транзакции: {e}")
         return None
@@ -457,40 +463,55 @@ def transform_added_elements(
     print("\n8. Классификация пользователей...")
     df['is_bim'] = df['user_name'].isin(BIM_USERS)
     
-    # 9. Расчёт времени между транзакциями (в пределах пользователя)
-    # Без группировки по дню - корректно считает ночную работу через полночь
-    print("\n9. Расчёт времени между транзакциями...")
-    
-    # Сортируем по пользователю и времени
-    df = df.sort_values(['user_name', 'date'])
-    
-    # Время до предыдущей транзакции в секундах (в пределах пользователя, БЕЗ группировки по дню)
-    df['time_since_prev_sec'] = df.groupby(['user_name'])['date'].diff().dt.total_seconds()
-    
+    # 9. Расчёт времени между транзакциями (в пределах пользователя × action_type).
+    # Без группировки по дню — корректно считает ночную работу через полночь.
+    #
+    # ВАЖНО: группируем по (user_name, action_type), потому что added и modified
+    # пишутся в БД независимыми потоками. Если их перемешать в одну цепочку,
+    # diff() будет учитывать "ложные" соседства между added и modified-транзакциями,
+    # из-за чего time_since_prev_sec становится меньше реального.
+    # Таким образом added (вместе с legacy, у которой action_type='added')
+    # и modified получают независимые сессионные расчёты.
+    #
+    # NB: при сложении time_since_prev_sec в BI учитывайте, что added и modified —
+    # параллельные цепочки. Для оценки "времени работы" суммируйте по одному action_type
+    # либо берите максимум по дате/пользователю, иначе возможен двойной учёт.
+    print("\n9. Расчёт времени между транзакциями (по user_name × action_type)...")
+
+    # Сортируем по пользователю, action_type и времени
+    df = df.sort_values(['user_name', 'action_type', 'date'])
+
+    # Время до предыдущей транзакции в секундах (в пределах user × action_type)
+    df['time_since_prev_sec'] = (
+        df.groupby(['user_name', 'action_type'])['date'].diff().dt.total_seconds()
+    )
+
     # Подгружаем последние транзакции из datalake для корректного расчёта на границе порций
     if postgres_conn_id:
         min_date = df['date'].min()
         users = df['user_name'].dropna().unique().tolist()
-        
+
         print(f"   - Подгрузка предыдущих транзакций из datalake (до {min_date})...")
         df_prev = _fetch_last_user_transactions(postgres_conn_id, min_date, users)
-        
+
         if df_prev is not None and not df_prev.empty:
-            print(f"   - Найдено {len(df_prev)} предыдущих транзакций")
-            
-            # Находим первые транзакции каждого пользователя в порции (где time_since_prev_sec = NaN)
+            print(f"   - Найдено {len(df_prev)} предыдущих транзакций (по user × action_type)")
+
+            # Находим первые транзакции каждой пары (user_name, action_type) в порции,
+            # где time_since_prev_sec = NaN (нет предшественника внутри батча).
             first_trans_mask = df['time_since_prev_sec'].isna()
-            
+
             if first_trans_mask.any():
-                # Для первых транзакций подставляем интервал от последней транзакции из datalake
-                df_first = df[first_trans_mask][['user_name', 'date']].copy()
-                df_first = df_first.merge(df_prev, on='user_name', how='left')
-                
+                # Для первых транзакций подставляем интервал от последней транзакции
+                # из datalake той же пары (user_name, action_type).
+                df_first = df[first_trans_mask][['user_name', 'action_type', 'date']].copy()
+                df_first = df_first.merge(df_prev, on=['user_name', 'action_type'], how='left')
+
                 # Рассчитываем интервал от предыдущей транзакции из datalake
                 df_first['corrected_interval'] = (
                     df_first['date'] - df_first['prev_date']
                 ).dt.total_seconds()
-                
+
                 # Обновляем интервалы в основном DataFrame (только если <= SESSION_GAP_SECONDS)
                 corrected_count = 0
                 for idx, row in df_first.iterrows():
@@ -498,7 +519,7 @@ def transform_added_elements(
                     if pd.notna(interval) and interval <= SESSION_GAP_SECONDS:
                         df.loc[idx, 'time_since_prev_sec'] = interval
                         corrected_count += 1
-                
+
                 print(f"   - Скорректировано интервалов: {corrected_count}")
     
     # Первая транзакция пользователя (без предыдущей в datalake) = NaN, заполняем 0
