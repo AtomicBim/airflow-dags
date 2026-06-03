@@ -127,7 +127,7 @@ def added_elements_etl():
 
     # === Transform task ===
 
-    @task
+    @task(multiple_outputs=False)
     def transform_data(
         ad_path: str,
         legacy_path: str,
@@ -182,10 +182,10 @@ def added_elements_etl():
         if df_transformed.empty:
             print("Transform вернул пустой DataFrame")
             return {
-                "designers_path": None,
-                "bim_path": None,
-                "max_added_date": None,
-                "max_modified_date": None,
+                "designers_path": "",
+                "bim_path": "",
+                "max_added_date": "",
+                "max_modified_date": "",
                 "is_empty": True,
             }
 
@@ -210,8 +210,8 @@ def added_elements_etl():
         return {
             "designers_path": designers_path,
             "bim_path": bim_path,
-            "max_added_date": max_added.strftime('%Y-%m-%d %H:%M:%S') if pd.notna(max_added) else None,
-            "max_modified_date": max_modified.strftime('%Y-%m-%d %H:%M:%S') if pd.notna(max_modified) else None,
+            "max_added_date": max_added.strftime('%Y-%m-%d %H:%M:%S') if pd.notna(max_added) else "",
+            "max_modified_date": max_modified.strftime('%Y-%m-%d %H:%M:%S') if pd.notna(max_modified) else "",
             "is_empty": False,
         }
 
