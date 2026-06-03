@@ -345,7 +345,7 @@ def transform_added_elements(
         df_legacy = df_legacy.drop(columns=["program_name"], errors="ignore")
         if "date" in df_legacy.columns:
             df_legacy["date"] = pd.to_datetime(df_legacy["date"], errors="coerce")
-            df_legacy = df_legacy[df_legacy["date"] < "2026-03-02"]
+            df_legacy = df_legacy[df_legacy["date"] < "2026-02-04"]
 
     # 3. Подготовка НОВЫХ added данных:
     #    - rename cad_program_version -> program_version (общий стандарт)
@@ -357,7 +357,7 @@ def transform_added_elements(
         df_added = df_added.drop(columns=["cad_program_id"], errors="ignore")
         if "date" in df_added.columns:
             df_added["date"] = pd.to_datetime(df_added["date"], errors="coerce")
-            df_added = df_added[df_added["date"] >= "2026-03-02"]
+            df_added = df_added[df_added["date"] >= "2026-02-04"]
 
     # 4. Подготовка НОВЫХ modified данных (структура идентична added):
     #    - берем данные НАЧИНАЯ с 2 марта 2026
@@ -367,7 +367,7 @@ def transform_added_elements(
         df_modified = df_modified.drop(columns=["cad_program_id"], errors="ignore")
         if "date" in df_modified.columns:
             df_modified["date"] = pd.to_datetime(df_modified["date"], errors="coerce")
-            df_modified = df_modified[df_modified["date"] >= "2026-03-02"]
+            df_modified = df_modified[df_modified["date"] >= "2026-02-04"]
 
     # 5. Объединение всех источников
     df_combined = pd.concat([df_legacy, df_added, df_modified], ignore_index=True)
