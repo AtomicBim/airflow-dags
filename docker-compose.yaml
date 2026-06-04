@@ -76,6 +76,9 @@ x-airflow-common:
     - ./dags:/opt/airflow/dags
     - ./config:/opt/airflow/config
     - ./mappings:/opt/airflow/mappings
+    # scripts/ — одноразовые утилиты вне DAG-каталога (backfill и т.п.).
+    # Не подхватывается DAG-парсером (вне /opt/airflow/dags), но доступен из worker.
+    - ./scripts:/opt/airflow/scripts
     # - /home/corpadm/data/airflow/logs:/opt/airflow/logs
     # - /home/corpadm/data/airflow/data:/opt/airflow/data
   user: "${AIRFLOW_UID:-50000}:0"
