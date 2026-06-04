@@ -16,11 +16,19 @@ seeds/load_dim_bim_users.py
 from __future__ import annotations
 
 import logging
+import os
 import sys
+
+# Скрипт может запускаться вне Airflow-контекста (просто `python <file>`),
+# тогда корень dags/ не попадает в sys.path и `from common.config` падает.
+# Добавляем dags/ в sys.path явно (3 уровня вверх от seeds/).
+_DAGS_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+if _DAGS_ROOT not in sys.path:
+    sys.path.insert(0, _DAGS_ROOT)
 
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
-from common.config import BIM_USERS
+from common.config import BIM_USERS  # noqa: E402  (sys.path фиксится выше)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
