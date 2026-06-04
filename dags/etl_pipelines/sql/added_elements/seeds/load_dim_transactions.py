@@ -44,7 +44,11 @@ CSV_CANDIDATES = (
         os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "mappings", "transactions.csv")
     ),
 )
-CSV_ENCODINGS = ("utf-8", "utf-8-sig", "cp1251")
+# utf-8-sig идёт ПЕРВЫМ: транзакционный CSV сохранён с BOM (\ufeff). Если поставить
+# utf-8 раньше, он успешно прочитает файл, но BOM прилипнет к первому имени колонки
+# ('\ufefftransaction_name'), и валидация заголовков упадёт. utf-8-sig автоматически
+# срезает BOM. cp1251 — на случай, если в будущем CSV пересохранят в windows-1251.
+CSV_ENCODINGS = ("utf-8-sig", "utf-8", "cp1251")
 
 # True-значения для колонки is_plugin (русские и английские варианты).
 TRUE_TOKENS = {"истина", "true", "1", "да", "yes"}
