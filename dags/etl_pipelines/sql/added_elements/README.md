@@ -20,7 +20,10 @@ sql/added_elements/
 │   ├── load_dim_ad_users.py
 │   ├── load_dim_transactions.py
 │   └── load_dim_bim_users.py
-└── transform/              # SQL шагов DAG (этап 2 рефакторинга — ещё не реализован)
+└── transform/              # SQL шагов DAG
+    ├── 01_extract_load_raw.sql
+    ├── 02_transform_staging.sql
+    └── 03_build_marts.sql
 ```
 
 ## Порядок инициализации (одноразово)
@@ -63,8 +66,8 @@ sql/added_elements/
 
 ## Запуск трансформации (Этап 2 готов)
 
-`transform/*.sql` параметризованы `%(last_date)s` / `%(run_date)s`. Запуск из
-backfill-скрипта (см. ниже) или из нового DAG-а (этап 3, ещё не сделан).
+`transform/*.sql` параметризованы `%(last_date)s` / `%(run_date)s`. Запуск
+из DAG-а `added_elements_etl` (каждые 2 часа) или вручную через backfill-скрипт.
 
 **Окна:**
 - RAW: `[last_date, run_date)`
@@ -87,12 +90,26 @@ docker exec ask-apache-airflow-airflow-worker-1 \
   python /opt/airflow/scripts/backfill_added_elements.py --start 2025-06-01
 ```
 
-## Что НЕ сделано (следующие этапы)
+## Статус этапов
 
-- Новый тонкий DAG `added_elements_etl_dag.py` (этап 3)
-- Валидационные SQL (этап 5)
-- Удаление старого кода (`extract/pluginsdb.py:added_elements`,
-  `transform/added_elements.py`, `load/datalake.py`) — этап 6
+| Этап | Что | Статус |
+|------|-----|--------|
+| 0+1 | DDL, функции, seeds | ✅ |
+| 2 | transform-SQL | ✅ |
+| 3 | Новый DAG `added_elements_etl` | ✅ работает |
+| 4 | Backfill 12M строк (49 мин) | ✅ |
+| 5 | Валидационные SQL в `tests/` | ⏳ |
+| 6 | Удаление старого кода (через 2 нед.) | ⏳ |
+
+Старый DAG сохранён как `dags/added_elements_etl_dag.py.bak` — удалить после
+2 недель стабильной работы нового.
+
+Что удалить в этапе 6:
+- `dags/added_elements_etl_dag.py.bak`
+- `dags/etl_pipelines/transform/added_elements.py`
+- функции `extract_added_incremental`, `extract_modified_incremental`,
+  `extract_legacy_added_elements` из `etl_pipelines/extract/pluginsdb.py`
+- Airflow Variables `added_elements_last_date`, `modified_elements_last_date`
 
 ## Соответствие Python-коду
 
