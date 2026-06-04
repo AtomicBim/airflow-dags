@@ -17,7 +17,9 @@
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS datalake.dim_ad_users (
     -- ID пользователя из public.ad_user (= revit.added_element.user_id).
-    ad_user_id       BIGINT PRIMARY KEY,
+    -- В источнике это UUID; храним как TEXT — компромисс между типобезопасностью
+    -- и гибкостью к разным источникам.
+    ad_user_id       TEXT PRIMARY KEY,
     user_name        TEXT,        -- = ad_user.display_name
     department       TEXT,
     project_section  TEXT,        -- унифицировано из project_section / project_doc_section

@@ -23,7 +23,9 @@ CREATE TABLE IF NOT EXISTS datalake.raw_added_elements (
 
     -- Общие поля (есть во всех трёх источниках)
     date                TIMESTAMP NOT NULL,
-    user_id             BIGINT,
+    -- В источнике (public.ad_user.id и revit.*.user_id) это UUID. Храним как TEXT,
+    -- чтобы не зависеть от точного типа источника и не падать на FDW-импорте.
+    user_id             TEXT,
     project_title       TEXT,
     transaction_name    TEXT,
     -- Хранится в исходном виде: либо PostgreSQL array literal '{14476419,14476420}'

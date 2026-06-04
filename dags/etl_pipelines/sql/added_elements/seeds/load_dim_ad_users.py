@@ -73,9 +73,11 @@ def main() -> None:
 
     # Достаём данные из источника. COALESCE даст пустые строки для NULL — это
     # важно для COPY (пустое поле = пустая строка).
+    # id в источнике — UUID, в datalake.dim_ad_users.ad_user_id — TEXT.
+    # Приводим к тексту через ::TEXT для единообразия (UUID/BIGINT/INT — всё ляжет).
     select_sql = f"""
         SELECT
-            id::BIGINT                       AS ad_user_id,
+            id::TEXT                         AS ad_user_id,
             display_name                     AS user_name,
             department                       AS department,
             {section_expr}                   AS project_section,
