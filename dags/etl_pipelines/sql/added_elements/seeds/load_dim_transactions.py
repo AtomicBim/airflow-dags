@@ -78,16 +78,25 @@ def _read_csv(path: str) -> list[tuple[str, str, bool]]:
                     raise ValueError(
                         f"CSV не содержит требуемых колонок. Найдено: {reader.fieldnames}"
                     )
-                rows: list[tuple[str, str, bool]] = []
+                # Дедупликация по transaction_name: побеждает ПОСЛЕДНЯЯ строка
+                # (поведение dict[name] = ... в transform/added_elements.py:144).
+                # В CSV встречаются повторяющиеся имена с разной классификацией.
+                dedup: dict[str, tuple[str, bool]] = {}
+                total = 0
                 for row in reader:
                     name = (row.get("transaction_name") or "").strip()
                     if not name:
                         continue
+                    total += 1
                     cls = (row.get("class") or "").strip()
                     is_plugin_token = (row.get("is_plugin") or "").strip().lower()
                     is_plugin = is_plugin_token in TRUE_TOKENS
-                    rows.append((name, cls, is_plugin))
-                logger.info("Прочитано %s строк из %s (encoding=%s)", len(rows), path, enc)
+                    dedup[name] = (cls, is_plugin)
+                rows = [(n, c, p) for n, (c, p) in dedup.items()]
+                logger.info(
+                    "Прочитано %s строк из %s (encoding=%s), уникальных после dedup: %s",
+                    total, path, enc, len(rows),
+                )
                 return rows
         except UnicodeDecodeError as exc:
             last_err = exc
