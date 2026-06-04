@@ -61,14 +61,38 @@ sql/added_elements/
    python /opt/airflow/dags/etl_pipelines/sql/added_elements/seeds/load_dim_bim_users.py
    ```
 
+## Запуск трансформации (Этап 2 готов)
+
+`transform/*.sql` параметризованы `%(last_date)s` / `%(run_date)s`. Запуск из
+backfill-скрипта (см. ниже) или из нового DAG-а (этап 3, ещё не сделан).
+
+**Окна:**
+- RAW: `[last_date, run_date)`
+- STG: `[last_date - 1 day, run_date)` — буфер для корректного `LAG`
+- MARTS: `[last_date, run_date)`
+
+**Бэкфилл (этап 4 — готов):**
+
+```bash
+# план без выполнения
+docker exec ask-apache-airflow-airflow-worker-1 \
+  python /opt/airflow/scripts/backfill_added_elements.py --dry-run
+
+# полный бэкфилл (окна по 14 дней по умолчанию)
+docker exec ask-apache-airflow-airflow-worker-1 \
+  python /opt/airflow/scripts/backfill_added_elements.py
+
+# с конкретной даты (после прерывания)
+docker exec ask-apache-airflow-airflow-worker-1 \
+  python /opt/airflow/scripts/backfill_added_elements.py --start 2025-06-01
+```
+
 ## Что НЕ сделано (следующие этапы)
 
-- `transform/01_extract_load_raw.sql` — инкрементальная загрузка RAW из FDW (этап 2)
-- `transform/02_transform_staging.sql` — обогащение RAW → STG (этап 2)
-- `transform/03_build_marts.sql` — STG → витрины (этап 2)
 - Новый тонкий DAG `added_elements_etl_dag.py` (этап 3)
-- Backfill-скрипт (этап 4)
 - Валидационные SQL (этап 5)
+- Удаление старого кода (`extract/pluginsdb.py:added_elements`,
+  `transform/added_elements.py`, `load/datalake.py`) — этап 6
 
 ## Соответствие Python-коду
 

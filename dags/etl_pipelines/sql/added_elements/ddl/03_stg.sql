@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS datalake.stg_added_elements (
     project_stage_name    TEXT,    -- 'П' / 'Р' / 'ЭП' / 'ГК' / 'Нет данных'
 
     -- --- Параметры Revit ---
-    program_version       INTEGER,
+    program_version       BIGINT,           -- nullable; в Python хранится как Int64
     transaction_name      TEXT,
     class                 TEXT,    -- категория транзакции (из dim_transactions или fallback)
     is_plugin             BOOLEAN,
@@ -36,7 +36,9 @@ CREATE TABLE IF NOT EXISTS datalake.stg_added_elements (
     is_bim                BOOLEAN NOT NULL DEFAULT FALSE,
 
     -- --- Сессии (расчёт через LAG) ---
-    time_since_prev_sec   INTEGER NOT NULL DEFAULT 0,
+    -- DOUBLE PRECISION для совпадения с float64 в текущем Python (diff().dt.total_seconds()).
+    -- Округление до INTEGER привело бы к расхождению на дробных частях секунд (<0.1%).
+    time_since_prev_sec   DOUBLE PRECISION NOT NULL DEFAULT 0,
     is_session_start      BOOLEAN NOT NULL DEFAULT FALSE,
 
     -- --- Дополнительные поля из revit.added_element / revit.modified_element ---

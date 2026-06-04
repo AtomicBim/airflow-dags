@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS datalake.raw_added_elements (
 
     -- Поля, существующие только в revit.added_element / revit.modified_element.
     -- Для source='legacy' остаются NULL.
-    program_version     INTEGER,
+    -- program_version — BIGINT, потому что в текущем Python используется nullable
+    -- Int64 (см. transform/added_elements.py:460), и pandas COPY кладёт это в BIGINT.
+    program_version     BIGINT,
     project_path        TEXT,
     group_model         TEXT,
     description         TEXT,
