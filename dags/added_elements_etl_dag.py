@@ -32,6 +32,7 @@ from pathlib import Path
 import pendulum
 from airflow.decorators import dag
 from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
+from airflow.timetables.interval import CronDataIntervalTimetable
 
 # Путь к SQL относительно DAGS_FOLDER (/opt/airflow/dags).
 # SQLExecuteQueryOperator принимает путь к файлу — ищет его в DAGS_FOLDER.
@@ -54,7 +55,12 @@ _DEFAULT_ARGS = {
 @dag(
     dag_id="added_elements_etl",
     start_date=pendulum.datetime(2025, 7, 17, tz="UTC"),  # min(date) из источников
-    schedule="17 */2 * * *",    # каждые 2 часа в :17 — как в старом DAG
+    # В Airflow 3 дефолтным таймтейблом для строкового cron стал
+    # CronTriggerTimetable: он даёт нулевой data_interval [slot, slot),
+    # из-за чего окно `WHERE date >= start AND date < end` всегда пустое.
+    # Явно используем CronDataIntervalTimetable: data_interval =
+    # [prev_slot, current_slot), т.е. 2-часовое окно "до текущего слота".
+    schedule=CronDataIntervalTimetable("17 */2 * * *", timezone="UTC"),
     catchup=False,              # история залита через backfill_added_elements.py
     max_active_runs=1,          # не запускать параллельно (FDW + STG LAG)
     tags=["elements", "etl", "analytics", "incremental", "elt", "no-pandas"],
