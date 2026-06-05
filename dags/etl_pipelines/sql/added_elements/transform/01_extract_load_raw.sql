@@ -3,15 +3,31 @@
 -- Этап 1: инкрементальная загрузка datalake.raw_added_elements из источников.
 --
 -- Параметры:
---   %(last_date)s : TIMESTAMP — нижняя граница окна (включительно)
---   %(run_date)s  : TIMESTAMP — верхняя граница окна (исключительно)
+--   %(last_date)s : TIMESTAMPTZ — нижняя граница окна (включительно)
+--   %(run_date)s  : TIMESTAMPTZ — верхняя граница окна (исключительно)
+--
+-- ВНИМАНИЕ — ТАЙМЗОНА:
+--   Источник пишет колонку `date` как `timestamp without time zone` в
+--   часовой зоне сервера БД источника — Asia/Yekaterinburg (UTC+5).
+--   То есть запись от 13:17 по местному времени хранится как наивный
+--   '2026-06-05 13:17:00' без указания таймзоны.
+--
+--   Параметры окна %(last_date)s / %(run_date)s приходят как TIMESTAMPTZ:
+--     - из Airflow: aware UTC (data_interval_start / data_interval_end)
+--     - из backfill_added_elements.py: aware Asia/Yekaterinburg
+--
+--   Чтобы корректно фильтровать `date` (naive local), приводим параметры
+--   к локальной naive-таймстамп через `AT TIME ZONE 'Asia/Yekaterinburg'`.
+--   Это работает одинаково для обоих источников параметров: PostgreSQL
+--   сначала переводит TIMESTAMPTZ в указанную таймзону, затем отбрасывает
+--   tz-метку, получая naive timestamp в Asia/Yekaterinburg.
 --
 -- Источники (через postgres_fdw → revit_ext / legacy_ext):
 --   revit_ext.added_element      -> source='added',    date >= LEGACY_CUTOFF
 --   revit_ext.modified_element   -> source='modified', date >= LEGACY_CUTOFF
 --   legacy_ext.added_element_legacy -> source='legacy', date <  LEGACY_CUTOFF
 --
--- LEGACY_CUTOFF = '2026-02-14' (см. transform/added_elements.py:LEGACY_CUTOFF_DATE).
+-- LEGACY_CUTOFF = '2026-02-14' — historic cutoff даты (см. README).
 --
 -- Идемпотентен: DELETE+INSERT в окне. При повторе одного и того же окна результат
 -- идентичен. PK id (BIGSERIAL) при повторе будет новым — это нормально, он только
@@ -24,8 +40,8 @@ BEGIN;
 -- DELETE предыдущих данных в окне (защита от дубликатов при повторе/retry).
 -- ---------------------------------------------------------------------------
 DELETE FROM datalake.raw_added_elements
- WHERE date >= %(last_date)s::timestamp
-   AND date <  %(run_date)s::timestamp;
+ WHERE date >= (%(last_date)s::timestamptz AT TIME ZONE 'Asia/Yekaterinburg')
+   AND date <  (%(run_date)s::timestamptz  AT TIME ZONE 'Asia/Yekaterinburg');
 
 -- ---------------------------------------------------------------------------
 -- revit.added_element  ->  source='added'
@@ -53,8 +69,11 @@ SELECT
     element_type_name,
     trace_id
   FROM revit_ext.added_element
- WHERE date >= GREATEST(%(last_date)s::timestamp, TIMESTAMP '2026-02-14')
-   AND date <  %(run_date)s::timestamp;
+ WHERE date >= GREATEST(
+                  (%(last_date)s::timestamptz AT TIME ZONE 'Asia/Yekaterinburg'),
+                  TIMESTAMP '2026-02-14'
+              )
+   AND date <  (%(run_date)s::timestamptz AT TIME ZONE 'Asia/Yekaterinburg');
 
 -- ---------------------------------------------------------------------------
 -- revit.modified_element  ->  source='modified'
@@ -82,8 +101,11 @@ SELECT
     element_type_name,
     trace_id
   FROM revit_ext.modified_element
- WHERE date >= GREATEST(%(last_date)s::timestamp, TIMESTAMP '2026-02-14')
-   AND date <  %(run_date)s::timestamp;
+ WHERE date >= GREATEST(
+                  (%(last_date)s::timestamptz AT TIME ZONE 'Asia/Yekaterinburg'),
+                  TIMESTAMP '2026-02-14'
+              )
+   AND date <  (%(run_date)s::timestamptz AT TIME ZONE 'Asia/Yekaterinburg');
 
 -- ---------------------------------------------------------------------------
 -- legacy.added_element_legacy  ->  source='legacy'
@@ -104,7 +126,10 @@ SELECT
     transaction_name,
     element_ids::TEXT
   FROM legacy_ext.added_element_legacy
- WHERE date >= %(last_date)s::timestamp
-   AND date <  LEAST(%(run_date)s::timestamp, TIMESTAMP '2026-02-14');
+ WHERE date >= (%(last_date)s::timestamptz AT TIME ZONE 'Asia/Yekaterinburg')
+   AND date <  LEAST(
+                  (%(run_date)s::timestamptz AT TIME ZONE 'Asia/Yekaterinburg'),
+                  TIMESTAMP '2026-02-14'
+              );
 
 COMMIT;

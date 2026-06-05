@@ -3,8 +3,13 @@
 -- Этап 3: разделение stg -> две витрины (designers / bim) по флагу is_bim.
 --
 -- Параметры:
---   %(last_date)s : TIMESTAMP — нижняя граница окна (включительно)
---   %(run_date)s  : TIMESTAMP — верхняя граница окна (исключительно)
+--   %(last_date)s : TIMESTAMPTZ — нижняя граница окна (включительно)
+--   %(run_date)s  : TIMESTAMPTZ — верхняя граница окна (исключительно)
+--
+-- ВНИМАНИЕ — ТАЙМЗОНА (см. 01_extract_load_raw.sql):
+--   `date` в витринах хранится как naive в Asia/Yekaterinburg. Параметры
+--   приходят как TIMESTAMPTZ и приводятся к локальной naive через
+--   AT TIME ZONE 'Asia/Yekaterinburg'.
 --
 -- ОКНО МАРТОВ:
 --   [last_date, run_date) — БЕЗ буфера в 1 день, который есть в STG.
@@ -21,12 +26,12 @@ BEGIN;
 -- DELETE окна в обеих витринах.
 -- ---------------------------------------------------------------------------
 DELETE FROM datalake.ext_added_elements_designers
- WHERE date >= %(last_date)s::timestamp
-   AND date <  %(run_date)s::timestamp;
+ WHERE date >= (%(last_date)s::timestamptz AT TIME ZONE 'Asia/Yekaterinburg')
+   AND date <  (%(run_date)s::timestamptz  AT TIME ZONE 'Asia/Yekaterinburg');
 
 DELETE FROM datalake.ext_added_elements_bim
- WHERE date >= %(last_date)s::timestamp
-   AND date <  %(run_date)s::timestamp;
+ WHERE date >= (%(last_date)s::timestamptz AT TIME ZONE 'Asia/Yekaterinburg')
+   AND date <  (%(run_date)s::timestamptz  AT TIME ZONE 'Asia/Yekaterinburg');
 
 -- ---------------------------------------------------------------------------
 -- BIM-витрина (INNER JOIN с dim_bim_users через is_bim=TRUE в STG).
@@ -50,8 +55,8 @@ SELECT
     family_name, floor, element_type_name, trace_id
   FROM datalake.stg_added_elements
  WHERE is_bim = TRUE
-   AND date >= %(last_date)s::timestamp
-   AND date <  %(run_date)s::timestamp;
+   AND date >= (%(last_date)s::timestamptz AT TIME ZONE 'Asia/Yekaterinburg')
+   AND date <  (%(run_date)s::timestamptz  AT TIME ZONE 'Asia/Yekaterinburg');
 
 -- ---------------------------------------------------------------------------
 -- Designers-витрина (LEFT ANTI: is_bim = FALSE в STG).
@@ -75,7 +80,7 @@ SELECT
     family_name, floor, element_type_name, trace_id
   FROM datalake.stg_added_elements
  WHERE is_bim = FALSE
-   AND date >= %(last_date)s::timestamp
-   AND date <  %(run_date)s::timestamp;
+   AND date >= (%(last_date)s::timestamptz AT TIME ZONE 'Asia/Yekaterinburg')
+   AND date <  (%(run_date)s::timestamptz  AT TIME ZONE 'Asia/Yekaterinburg');
 
 COMMIT;

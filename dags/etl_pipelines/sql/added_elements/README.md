@@ -91,6 +91,28 @@ docker exec ask-apache-airflow-airflow-worker-1 \
   python /opt/airflow/scripts/backfill_added_elements.py --start 2026-06-01
 ```
 
+## Таймзона источника
+
+> Источник (`revit.added_element`, `revit.modified_element`, `legacy.added_element_legacy`)
+> пишет колонку `date` как `timestamp without time zone` в часовой зоне
+> сервера БД источника — **Asia/Yekaterinburg (UTC+5)**.
+
+Что это значит на практике:
+- В `raw_added_elements`, `stg_added_elements`, `ext_added_elements_*` колонка `date`
+  тоже naive в `Asia/Yekaterinburg` (скопировано из источника без конверсии).
+- Параметры окна (`%(last_date)s`, `%(run_date)s`) приходят как `TIMESTAMPTZ`:
+  - из Airflow DAG'а: aware UTC,
+  - из `backfill_added_elements.py`: aware Asia/Yekaterinburg.
+- В SQL все WHERE-фильтры приводят параметры к локальной таймзоне через
+  `(%(last_date)s::timestamptz AT TIME ZONE 'Asia/Yekaterinburg')`. Это работает
+  одинаково для обоих источников параметров.
+
+**Если переезжаешь в другую зону** — найди по grep строку `'Asia/Yekaterinburg'`
+в `transform/*.sql` и `scripts/backfill_added_elements.py:SOURCE_TZ`, замени везде
+синхронно.
+
+---
+
 ## Runbook: восстановление после сбоя
 
 > **Важно:** DAG обрабатывает строго одно cron-окно `[data_interval_start, data_interval_end)`
@@ -138,6 +160,20 @@ docker exec ask-apache-airflow-airflow-worker-1 \
 
 Проверка: `diagnose` → таблица «Раны DAG»: `data_interval_end - data_interval_start`
 должно быть **= 2 часа**.
+
+**(a.2) Окно DAG-а сдвинуто на 5 часов относительно данных в источнике**
+
+Симптом: scheduled-раны зелёные, но `raw_added_elements` не растёт в текущем
+окне. `src.added.max(date)` идёт впереди `now() AT TIME ZONE 'UTC'` на несколько
+часов (это норма: источник пишет в Asia/Yekaterinburg). Причина — где-то в
+`transform/*.sql` фильтр `date` сравнивается с параметром как `::timestamp`
+вместо `::timestamptz AT TIME ZONE 'Asia/Yekaterinburg'`. При сессионной TZ =
+`UTC` aware-параметр UTC приводится к naive UTC, а `date` в источнике naive в
+Asia/Yekaterinburg → сравнение даёт сдвиг 5 часов в прошлое.
+
+Проверка: открой соответствующий SQL и убедись, что все три WHERE на `date`
+содержат `AT TIME ZONE 'Asia/Yekaterinburg'`. См. также раздел «Таймзона
+источника» выше.
 
 **(b) FDW отвалился (источник недоступен)**
 

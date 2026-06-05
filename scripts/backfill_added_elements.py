@@ -8,6 +8,15 @@ scripts/backfill_added_elements.py
 Запускается ВНУТРИ Airflow-контейнера (worker). Использует Airflow Connection
 ``tim_db_postgres`` через ``PostgresHook``.
 
+ТАЙМЗОНА:
+    Параметры --start / --end интерпретируются как даты в часовой зоне источника
+    Asia/Yekaterinburg (UTC+5). Это совпадает с тем, как источник пишет колонку
+    `date` (naive timestamp в локальной зоне). См. подробности в
+    dags/etl_pipelines/sql/added_elements/transform/01_extract_load_raw.sql.
+
+    Пример: ``--start 2026-06-05`` означает "00:00 5 июня по Asia/Yekaterinburg",
+    что эквивалентно "19:00 4 июня по UTC".
+
 Логика
 ------
 1. Определяет диапазон [global_min_date, global_max_date) по источникам
@@ -45,9 +54,23 @@ import argparse
 import logging
 import os
 import sys
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 
 from airflow.providers.postgres.hooks.postgres import PostgresHook
+
+# Часовая зона, в которой источник пишет колонку `date` (naive timestamp).
+# См. подробное объяснение в
+# dags/etl_pipelines/sql/added_elements/transform/01_extract_load_raw.sql.
+#
+# Все параметры окон передаются в SQL как aware-datetime в этой таймзоне,
+# чтобы конверсия через `AT TIME ZONE 'Asia/Yekaterinburg'` дала тождественный
+# naive timestamp, совпадающий с фактическим хранением в источнике.
+try:
+    from zoneinfo import ZoneInfo  # Python 3.9+
+    SOURCE_TZ = ZoneInfo("Asia/Yekaterinburg")
+except ImportError:  # pragma: no cover — fallback на pytz если zoneinfo нет
+    import pytz
+    SOURCE_TZ = pytz.timezone("Asia/Yekaterinburg")
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -85,6 +108,9 @@ def _detect_global_range(hook: PostgresHook) -> tuple[datetime, datetime]:
     """
     Минимум и максимум date по всем источникам через FDW.
     Возвращает (min_date, max_date_exclusive) — окно полуоткрытое.
+
+    Источник пишет date как naive в SOURCE_TZ. Возвращаемые datetime'ы делаем
+    aware в SOURCE_TZ, чтобы корректно передать в SQL (см. шапку файла).
     """
     sql = """
         SELECT
@@ -104,8 +130,9 @@ def _detect_global_range(hook: PostgresHook) -> tuple[datetime, datetime]:
         raise RuntimeError("Не удалось определить диапазон дат в источниках")
     min_d, max_d = rows[0]
     # Округляем до суток и делаем верх полуоткрытым (+1 день).
-    min_d = datetime(min_d.year, min_d.month, min_d.day)
-    max_d = datetime(max_d.year, max_d.month, max_d.day) + timedelta(days=1)
+    # Дату интерпретируем как момент в SOURCE_TZ (источник пишет в этой зоне).
+    min_d = datetime(min_d.year, min_d.month, min_d.day, tzinfo=SOURCE_TZ)
+    max_d = datetime(max_d.year, max_d.month, max_d.day, tzinfo=SOURCE_TZ) + timedelta(days=1)
     return min_d, max_d
 
 
@@ -170,14 +197,24 @@ def main() -> None:
 
     hook = PostgresHook(postgres_conn_id=CONN_ID)
 
+    def _parse_arg_date(s: str) -> datetime:
+        """
+        Парсит YYYY-MM-DD (или ISO 8601) → aware datetime в SOURCE_TZ.
+        --start 2026-06-05 означает "00:00 5 июня по местному времени источника".
+        """
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=SOURCE_TZ)
+        return dt
+
     # Определяем диапазон.
     if args.start and args.end:
-        global_start = datetime.fromisoformat(args.start)
-        global_end   = datetime.fromisoformat(args.end)
+        global_start = _parse_arg_date(args.start)
+        global_end   = _parse_arg_date(args.end)
     else:
         auto_start, auto_end = _detect_global_range(hook)
-        global_start = datetime.fromisoformat(args.start) if args.start else auto_start
-        global_end   = datetime.fromisoformat(args.end)   if args.end   else auto_end
+        global_start = _parse_arg_date(args.start) if args.start else auto_start
+        global_end   = _parse_arg_date(args.end)   if args.end   else auto_end
 
     logger.info("Диапазон бэкфилла: [%s, %s), окно %s дней",
                 global_start, global_end, args.days)

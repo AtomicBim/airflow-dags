@@ -3,8 +3,13 @@
 -- Этап 2: обогащение raw -> stg + расчёт сессий через LAG.
 --
 -- Параметры:
---   %(last_date)s : TIMESTAMP — нижняя граница окна (включительно)
---   %(run_date)s  : TIMESTAMP — верхняя граница окна (исключительно)
+--   %(last_date)s : TIMESTAMPTZ — нижняя граница окна (включительно)
+--   %(run_date)s  : TIMESTAMPTZ — верхняя граница окна (исключительно)
+--
+-- ВНИМАНИЕ — ТАЙМЗОНА (см. 01_extract_load_raw.sql):
+--   `date` в raw/stg хранится как naive в Asia/Yekaterinburg (скопировано из
+--   источника как есть). Параметры приходят как TIMESTAMPTZ и приводятся к
+--   локальной naive через AT TIME ZONE 'Asia/Yekaterinburg'.
 --
 -- ВАЖНО: окно пересчёта STG расширено на 1 день назад относительно RAW —
 -- [last_date - 1 day, run_date). Это нужно, чтобы LAG(date) для первой строки
@@ -43,8 +48,8 @@ BEGIN;
 -- DELETE окна (включая буферный день для пересчёта сессий).
 -- ---------------------------------------------------------------------------
 DELETE FROM datalake.stg_added_elements
- WHERE date >= %(last_date)s::timestamp - INTERVAL '1 day'
-   AND date <  %(run_date)s::timestamp;
+ WHERE date >= (%(last_date)s::timestamptz AT TIME ZONE 'Asia/Yekaterinburg') - INTERVAL '1 day'
+   AND date <  (%(run_date)s::timestamptz  AT TIME ZONE 'Asia/Yekaterinburg');
 
 -- ---------------------------------------------------------------------------
 -- INSERT обогащённых строк.
@@ -101,8 +106,8 @@ WITH enriched AS (
       LEFT JOIN datalake.dim_transactions  dt ON dt.transaction_name = r.transaction_name
       LEFT JOIN LATERAL datalake.classify_transaction_fallback(r.transaction_name) AS fb ON TRUE
       LEFT JOIN datalake.dim_bim_users     b  ON b.user_name         = a.user_name
-     WHERE r.date >= %(last_date)s::timestamp - INTERVAL '1 day'
-       AND r.date <  %(run_date)s::timestamp
+     WHERE r.date >= (%(last_date)s::timestamptz AT TIME ZONE 'Asia/Yekaterinburg') - INTERVAL '1 day'
+       AND r.date <  (%(run_date)s::timestamptz  AT TIME ZONE 'Asia/Yekaterinburg')
 ),
 windowed AS (
     -- Оконные функции: LAG для расчёта интервала, ROW_NUMBER для дедуп-флага.
