@@ -96,7 +96,7 @@ docker exec ask-apache-airflow-airflow-worker-1 \
 |------|-----|--------|
 | 0+1 | DDL, функции, seeds | ✅ |
 | 2 | transform-SQL | ✅ |
-| 3 | Новый DAG `added_elements_etl` | ✅ работает |
+| 3 | Новый DAG `added_elements_etl` | ✅ создан, 🔍 отладка ручного триггера |
 | 4 | Backfill 12M строк (49 мин) | ✅ |
 | 5 | Валидационные SQL в `tests/` | ⏳ |
 | 6 | Удаление старого кода (через 2 нед.) | ⏳ |
