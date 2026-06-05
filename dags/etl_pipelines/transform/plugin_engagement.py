@@ -1,10 +1,19 @@
 """
 Transform модуль для расчета метрики Plugin Engagement Score.
 Оценивает использование плагинов проектировщиками (не BIM-пользователями).
-Поддерживает исторические данные с разбивкой по дням.
+Поддерживает временной ряд с разбивкой по дням (rolling window).
 """
+from datetime import timedelta
+
 import pandas as pd
 import numpy as np
+
+
+# Размер скользящего окна для расчёта активности (в днях).
+# Раньше расчёт был кумулятивным (с начала истории), из-за чего метрика
+# фактически отражала "стаж работы", а не текущую вовлечённость.
+# Перешли на rolling window: для каждого дня берём данные за последние 30 дней.
+ROLLING_WINDOW_DAYS = 30
 
 
 def transform_plugin_engagement(
@@ -12,15 +21,15 @@ def transform_plugin_engagement(
     monitoring_path: str,
     legacy_monitoring_path: str,
     bim_users: set,
-    w1: float = 0.5,
-    w2: float = 0.5
+    w1: float = 0.7,
+    w2: float = 0.3,
 ) -> pd.DataFrame:
     """
     Вычисляет Plugin Engagement Score для проектировщиков с разбивкой по дням.
 
-    Метрика рассчитывается кумулятивно на конец каждого дня:
-    - Для каждого дня учитываются ВСЕ данные до конца этого дня включительно
-    - Отслеживается динамика изменения вовлеченности во времени
+    Метрика рассчитывается в скользящем окне ROLLING_WINDOW_DAYS дней:
+    - Для каждого дня учитываются данные за последние N дней (по умолчанию 30)
+    - Отражает ТЕКУЩУЮ вовлечённость, а не исторический "стаж"
 
     Метрика учитывает:
     - Количество уникальных плагинов (разнообразие инструментария)
@@ -36,8 +45,8 @@ def transform_plugin_engagement(
        - Исключаются BIM-специалисты из config.BIM_USERS
     3. Извлечение дат: все уникальные даты из мониторинга
     4. Для КАЖДОГО дня:
-       - Агрегация кумулятивно (данные до конца дня)
-       - Нормализация Min-Max (в рамках дня)
+       - Агрегация в окне [day - ROLLING_WINDOW_DAYS, day]
+       - Нормализация Min-Max (в рамках дня; при равных значениях — NaN)
        - Расчет метрики
 
     Args:
@@ -45,19 +54,23 @@ def transform_plugin_engagement(
         monitoring_path: Путь к CSV с НОВЫМИ данными мониторинга (plugins.monitoring)
         legacy_monitoring_path: Путь к CSV со СТАРЫМИ данными мониторинга (legacy.monitoring_legacy)
         bim_users: Множество BIM-пользователей для фильтрации
-        w1: Вес для количества уникальных плагинов (default: 0.5)
-        w2: Вес для количества запусков (default: 0.5)
+        w1: Вес для количества уникальных плагинов (default: 0.7)
+        w2: Вес для количества запусков (default: 0.3)
 
     Returns:
         DataFrame с колонками:
         - day: Дата (конец дня)
         - user_name: ФИО проектировщика
         - email, company, department, project_section: Доп. поля из AD
-        - unique_plugins: Кумулятивное количество уникальных плагинов
-        - total_launches: Кумулятивное количество запусков
-        - unique_plugins_norm: Нормализованное количество плагинов (в рамках дня)
-        - total_launches_norm: Нормализованное количество запусков (в рамках дня)
-        - plugin_engagement_score: Итоговая оценка вовлеченности (в рамках дня)
+        - unique_plugins: Количество уникальных плагинов в окне [day-30d, day]
+        - total_launches: Количество запусков в окне [day-30d, day]
+        - unique_plugins_norm: Нормализованное (в рамках дня); NaN если у всех одинаково
+        - total_launches_norm: Нормализованное (в рамках дня); NaN если у всех одинаково
+        - plugin_engagement_score: w1*plugins_norm + w2*launches_norm; NaN если одна из норм NaN
+
+    Внимание: записи с NaN в `*_norm` / `plugin_engagement_score` означают, что метрика
+    в этот день для этого пользователя НЕОПРЕДЕЛЕНА (вырожденная группа: все равны).
+    На дашбордах такие записи стоит фильтровать или показывать отдельно.
     """
 
     print("=" * 80)
@@ -195,8 +208,8 @@ def transform_plugin_engagement(
     plugin_column = 'plugin_id' if 'plugin_id' in df_designers.columns else 'plugin'
     print(f"   - Используется колонка плагина: '{plugin_column}'")
 
-    # 8. Кумулятивный расчет по дням
-    print("\n4. Кумулятивный расчет метрик по дням...")
+    # 8. Расчёт по дням в скользящем окне ROLLING_WINDOW_DAYS
+    print(f"\n4. Расчёт метрик по дням (rolling window = {ROLLING_WINDOW_DAYS} дней)...")
 
     all_dates = sorted(df_designers['day'].unique())
     print(f"   - Обработка {len(all_dates)} дней...")
@@ -204,12 +217,18 @@ def transform_plugin_engagement(
     daily_results = []
 
     def min_max_normalize(series: pd.Series) -> pd.Series:
-        """Нормализация Min-Max в диапазон [0, 1]."""
+        """
+        Нормализация Min-Max в диапазон [0, 1].
+
+        При вырожденном случае (все значения равны) возвращает NaN — метрика
+        не определена. Ранее возвращалось 0.5, что было искусственным
+        плейсхолдером и портило статистику на дашбордах.
+        """
         min_val = series.min()
         max_val = series.max()
 
         if max_val == min_val:
-            return pd.Series([0.5] * len(series), index=series.index)
+            return pd.Series([np.nan] * len(series), index=series.index)
 
         return (series - min_val) / (max_val - min_val)
 
@@ -217,9 +236,22 @@ def transform_plugin_engagement(
     optional_fields = [f for f in ['email', 'company', 'department', 'project_section', 'project_doc_section']
                        if f in df_designers.columns]
 
+    window_delta = timedelta(days=ROLLING_WINDOW_DAYS)
+
     for current_day in all_dates:
-        # Кумулятивно: все данные до конца текущего дня включительно
-        df_until_day = df_designers[df_designers['day'] <= current_day]
+        # Rolling window: данные за последние ROLLING_WINDOW_DAYS дней до current_day включительно.
+        # Окно полуоткрытое слева: (current_day - 30d, current_day] — чтобы окна не пересекались
+        # на границе дня (current_day одной итерации не равен (current_day - 30d) следующей).
+        window_start_excl = current_day - window_delta
+        df_window = df_designers[
+            (df_designers['day'] > window_start_excl) &
+            (df_designers['day'] <= current_day)
+        ]
+
+        # В окне может не остаться записей для пользователя — он туда не попадёт.
+        # Это правильно: пользователь без активности за 30 дней не считается вовлечённым.
+        if df_window.empty:
+            continue
 
         agg_kwargs = {
             'unique_plugins': (plugin_column, 'nunique'),
@@ -227,13 +259,14 @@ def transform_plugin_engagement(
             **{field: (field, 'first') for field in optional_fields}
         }
 
-        df_day_agg = df_until_day.groupby('user_name').agg(**agg_kwargs).reset_index()
+        df_day_agg = df_window.groupby('user_name').agg(**agg_kwargs).reset_index()
 
-        # Нормализация в рамках текущего дня
+        # Нормализация в рамках текущего дня (только среди тех, кто был активен в окне)
         df_day_agg['unique_plugins_norm'] = min_max_normalize(df_day_agg['unique_plugins'])
         df_day_agg['total_launches_norm'] = min_max_normalize(df_day_agg['total_launches'])
 
-        # Расчет Plugin Engagement Score
+        # Расчет Plugin Engagement Score.
+        # Если одна из норм NaN (вырожденная группа) — score тоже NaN.
         df_day_agg['plugin_engagement_score'] = (
             w1 * df_day_agg['unique_plugins_norm'] +
             w2 * df_day_agg['total_launches_norm']
@@ -243,6 +276,14 @@ def transform_plugin_engagement(
         daily_results.append(df_day_agg)
 
     # Объединяем все дни
+    if not daily_results:
+        print("   ВНИМАНИЕ: ни в одном дне не оказалось активных проектировщиков в окне!")
+        return pd.DataFrame(columns=[
+            'day', 'user_name', 'email', 'company', 'department', 'project_section',
+            'unique_plugins', 'total_launches',
+            'unique_plugins_norm', 'total_launches_norm', 'plugin_engagement_score'
+        ])
+
     df_final = pd.concat(daily_results, ignore_index=True)
 
     # Переупорядочиваем колонки
@@ -259,37 +300,48 @@ def transform_plugin_engagement(
     print(f"   - Дней: {df_final['day'].nunique()}")
     print(f"   - Проектировщиков: {df_final['user_name'].nunique()}")
 
-    # 9. Статистика за последний день
-    print("\n5. Статистика за последний день...")
+    # 9. Статистика за последний день (rolling window)
+    print("\n5. Статистика за последний день (rolling 30d)...")
 
     last_day = df_final['day'].max()
     df_last_day = df_final[df_final['day'] == last_day].copy()
 
+    # Записи с NaN-score — это вырожденные группы (у всех одинаковые метрики).
+    # Для статистики и топ/низ их отфильтровываем.
+    df_last_day_scored = df_last_day.dropna(subset=['plugin_engagement_score'])
+
+    nan_count = len(df_last_day) - len(df_last_day_scored)
+
     print(f"   - Дата: {last_day}")
-    print(f"   - Проектировщиков: {len(df_last_day)}")
-    print(f"   - Средняя оценка: {df_last_day['plugin_engagement_score'].mean():.4f}")
-    print(f"   - Средн. кол-во плагинов: {df_last_day['unique_plugins'].mean():.2f}")
-    print(f"   - Средн. кол-во запусков: {df_last_day['total_launches'].mean():.2f}")
+    print(f"   - Активных проектировщиков в окне: {len(df_last_day)}")
+    if nan_count:
+        print(f"   - Из них с неопределённым score (NaN): {nan_count}")
+    print(f"   - Средняя оценка: {df_last_day_scored['plugin_engagement_score'].mean():.4f}")
+    print(f"   - Средн. уникальных плагинов: {df_last_day['unique_plugins'].mean():.2f}")
+    print(f"   - Средн. запусков (за 30 дней): {df_last_day['total_launches'].mean():.2f}")
 
-    # 10. Вывод топ-5 и низ-5 за последний день
-    print("\n" + "=" * 80)
-    print(f"ТОП-5 проектировщиков на {last_day}:")
-    print("=" * 80)
-    for i, (_, row) in enumerate(df_last_day.head(5).iterrows(), start=1):
-        print(f"{i}. {row['user_name']}")
-        print(f"   Оценка: {row['plugin_engagement_score']:.4f} | "
-              f"Плагинов: {row['unique_plugins']} | "
-              f"Запусков: {row['total_launches']}")
+    # 10. Вывод топ-5 и низ-5 за последний день (только определённые score)
+    if df_last_day_scored.empty:
+        print("\n(Все score на последний день — NaN, топ/низ не выводим)")
+    else:
+        print("\n" + "=" * 80)
+        print(f"ТОП-5 проектировщиков на {last_day}:")
+        print("=" * 80)
+        for i, (_, row) in enumerate(df_last_day_scored.head(5).iterrows(), start=1):
+            print(f"{i}. {row['user_name']}")
+            print(f"   Оценка: {row['plugin_engagement_score']:.4f} | "
+                  f"Плагинов: {row['unique_plugins']} | "
+                  f"Запусков (30d): {row['total_launches']}")
 
-    print("\n" + "=" * 80)
-    print(f"НИЗ-5 проектировщиков на {last_day} (требуется внимание):")
-    print("=" * 80)
-    tail_start = max(len(df_last_day) - 5, 0) + 1
-    for i, (_, row) in enumerate(df_last_day.tail(5).iterrows(), start=tail_start):
-        print(f"{i}. {row['user_name']}")
-        print(f"   Оценка: {row['plugin_engagement_score']:.4f} | "
-              f"Плагинов: {row['unique_plugins']} | "
-              f"Запусков: {row['total_launches']}")
+        print("\n" + "=" * 80)
+        print(f"НИЗ-5 проектировщиков на {last_day} (требуется внимание):")
+        print("=" * 80)
+        tail_start = max(len(df_last_day_scored) - 5, 0) + 1
+        for i, (_, row) in enumerate(df_last_day_scored.tail(5).iterrows(), start=tail_start):
+            print(f"{i}. {row['user_name']}")
+            print(f"   Оценка: {row['plugin_engagement_score']:.4f} | "
+                  f"Плагинов: {row['unique_plugins']} | "
+                  f"Запусков (30d): {row['total_launches']}")
 
     print("\n" + "=" * 80)
     print("ТРАНСФОРМАЦИЯ ЗАВЕРШЕНА")
