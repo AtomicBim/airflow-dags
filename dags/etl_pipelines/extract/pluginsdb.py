@@ -169,18 +169,8 @@ def extract_new_project_sync(postgres_conn_id: str, output_path: str, **context)
     return output_path
 
 
-def extract_logs(postgres_conn_id: str, output_path: str, **context) -> str:
-    """Экспортирует таблицу plugins.log из pluginsdb."""
-    hook = PostgresHook(postgres_conn_id=postgres_conn_id)
-    conn = hook.get_conn()
-    sql = 'SELECT * FROM plugins.log'
-    df = pd.read_sql(sql, conn)
-    conn.close()
-
-    df.to_csv(output_path, index=False, encoding='utf-8')
-    print(f"Экспортировано {len(df)} записей логов в {output_path}")
-
-    return output_path
+# NOTE: extract_logs удалена вместе с DAG-ом logs_etl_dag (pipeline снят
+# с эксплуатации). Если потребуется вернуть — таблица plugins.log в pluginsdb.
 
 
 # NOTE: extract_added_incremental / extract_modified_incremental /

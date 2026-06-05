@@ -10,7 +10,7 @@ def extract_plugins_task(output_path: str, postgres_conn_id: str = "tim_db_plugi
     """
     Извлекает плагины из pluginsdb.
 
-    Общая task-функция, используемая в нескольких DAG-ах (logs_etl_dag, scripts_etl_dag).
+    Общая task-функция, используемая в scripts_etl_dag.
 
     Args:
         output_path: Путь для сохранения CSV файла с данными плагинов
