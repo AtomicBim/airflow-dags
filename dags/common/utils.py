@@ -1,18 +1,12 @@
 """
 Общие утилиты для ETL pipelines.
 
-Содержит переиспользуемые функции для обработки данных:
-- Извлечение имен проектов
-- Фильтрация пользователей
-- Обработка HTML
-- Работа с датами
+Содержит переиспользуемые функции для обработки имён проектов
+(используются projectsync и scripts).
+
+Логика added_elements портирована в PL/pgSQL — см.
+dags/etl_pipelines/sql/added_elements/functions/parse_project.sql
 """
-import pandas as pd
-import numpy as np
-from bs4 import BeautifulSoup
-import ast
-import re
-from typing import Optional
 
 
 # ============================================================================
@@ -43,102 +37,11 @@ def extract_short_name(name: str) -> str:
     return '_'.join(parts[:2]) if len(parts) >= 2 else name
 
 
-def extract_short_project_name(name: str) -> str:
-    """
-    Извлекает название проекта БЕЗ последнего блока по '_'.
-
-    Args:
-        name: Полное название проекта (например, 'K01_AR_2024_vaskov')
-
-    Returns:
-        Название без последней части (например, 'K01_AR_2024')
-
-    Examples:
-        >>> extract_short_project_name('K01_AR_2024_vaskov')
-        'K01_AR_2024'
-        >>> extract_short_project_name('K01_AR')
-        'K01'
-        >>> extract_short_project_name('simple')
-        'simple'
-    """
-    if not isinstance(name, str) or not name:
-        return name
-    parts = name.split('_')
-    if len(parts) <= 1:
-        return name
-    return '_'.join(parts[:-1])
-
-
-def extract_file_storage_name(row: pd.Series) -> str:
-    """
-    Извлекает название файлового хранилища из project_name.
-
-    Удаляет имя пользователя из конца названия проекта, если оно там есть.
-
-    Args:
-        row: Pandas Series с полями 'project_name' и 'username'
-
-    Returns:
-        Название файлового хранилища
-
-    Examples:
-        >>> row = pd.Series({'project_name': 'K01_AR_2024_vaskov', 'username': 'vaskov'})
-        >>> extract_file_storage_name(row)
-        'K01_AR_2024'
-    """
-    project = row.get("project_name")
-    username = row.get("username")
-
-    if pd.isna(project) or pd.isna(username):
-        return project
-
-    parts = str(project).split("_")
-    if len(parts) < 2:
-        return project
-
-    last_part = parts[-1].strip().lower()
-    user_name = str(username).strip().lower()
-
-    if last_part == user_name:
-        return "_".join(parts[:-1])
-    else:
-        return project
-
-
-# ============================================================================
-# Функции определения объектов, разделов и стадий проектов
-# ============================================================================
-
-def get_object_name(project_name: str) -> str:
-    """
-    Определяет название объекта по имени проекта.
-
-    Args:
-        project_name: Название проекта
-
-    Returns:
-        Название объекта ('АТОМ', 'Кортрос', 'ИНПРО', 'Ялта' и т.д.)
-
-    Examples:
-        >>> get_object_name('K01_AR_2024')
-        'Кортрос'
-        >>> get_object_name('АТОМ_КР_П_2024')
-        'АТОМ'
-    """
-    name = str(project_name)
-    
-    if re.search(r"СП\.ЛЛУ|стандарт|узлы|узел|библиотека", name, re.IGNORECASE):
-        return "Узлы и стандарты"
-    elif re.search(r"АТОМ|ДОУ|08-12|ИКП|ATOM|АПУ", name, re.IGNORECASE):
-        return "АТОМ"
-    elif re.search(r"K01", name, re.IGNORECASE):
-        return "Кортрос"
-    elif re.search(r"ИНПРО", name, re.IGNORECASE):
-        return "ИНПРО"
-    elif re.search(r"Ялта", name, re.IGNORECASE):
-        return "Ялта"
-    else:
-        return "Неизвестные проекты"
+# NOTE: extract_short_project_name / extract_file_storage_name / get_object_name
+# удалены вместе с переходом added_elements на ELT-архитектуру. Их Python-логика
+# портирована в PL/pgSQL: dags/etl_pipelines/sql/added_elements/functions/parse_project.sql
+#   - parse_file_storage_name(text) — порт extract_short_project_name
+#   - parse_object_name(text)       — порт get_object_name
 
 
 def get_project_solution(project_name: str, object_name: str) -> str:
