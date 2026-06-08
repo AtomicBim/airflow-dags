@@ -60,7 +60,7 @@ _DEFAULT_ARGS = {
     # из-за чего окно `WHERE date >= start AND date < end` всегда пустое.
     # Явно используем CronDataIntervalTimetable: data_interval =
     # [prev_slot, current_slot), т.е. 2-часовое окно "до текущего слота".
-    schedule=CronDataIntervalTimetable("17 */2 * * *", timezone="UTC"),
+    schedule=CronDataIntervalTimetable("17 * * * *", timezone="UTC"),
     catchup=False,              # история залита через backfill_added_elements.py
     max_active_runs=1,          # не запускать параллельно (FDW + STG LAG)
     tags=["elements", "etl", "analytics", "incremental", "elt", "no-pandas"],
