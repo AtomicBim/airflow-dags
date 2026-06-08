@@ -100,14 +100,14 @@ def transform_projectsync_analytics(
     df_new.loc[df_new["email"].isna(), "username"] = np.nan
 
 
-    # 3.5 Фильтрация: legacy строго до 2 марта, new начиная с 2 марта
+    # 3.5 Фильтрация: legacy строго до 15 февраля, new начиная с 15 февраля
     if "date" in df_legacy.columns:
         df_legacy["date"] = pd.to_datetime(df_legacy["date"], errors="coerce")
-        df_legacy = df_legacy[df_legacy["date"] < "2026-03-02"]
+        df_legacy = df_legacy[df_legacy["date"] < "2026-02-15"]
 
     if "date" in df_new.columns:
         df_new["date"] = pd.to_datetime(df_new["date"], errors="coerce")
-        df_new = df_new[df_new["date"] >= "2026-03-02"]
+        df_new = df_new[df_new["date"] >= "2026-02-15"]
 
 
     # 4. ОБЪЕДИНЕНИЕ СТАРОЙ И НОВОЙ БАЗЫ
