@@ -56,7 +56,7 @@ _DEFAULT_ARGS = {
     dag_id="added_elements_etl",
     start_date=pendulum.datetime(2025, 7, 17, tz="UTC"),  # min(date) из источников
     # В Airflow 3 дефолтным таймтейблом для строкового cron стал
-    # CronTriggerTimetable: он даёт нулевой data_interval [slot, slot),
+    # CronTriggerTimetable: он даёт  нулевой data_interval [slot, slot),
     # из-за чего окно `WHERE date >= start AND date < end` всегда пустое.
     # Явно используем CronDataIntervalTimetable: data_interval =
     # [prev_slot, current_slot), т.е. 2-часовое окно "до текущего слота".
