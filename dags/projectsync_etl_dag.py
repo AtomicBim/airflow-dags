@@ -23,7 +23,8 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
 @dag(
     dag_id="projectsync_etl_dag",
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
-    schedule="10 * * * *",
+    # Раз в сутки в 01:10 UTC — обрабатываем данные за предыдущий день.
+    schedule="10 1 * * *",
     catchup=False,
     tags=["projectsync", "etl", "analytics"]
 )

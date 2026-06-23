@@ -17,7 +17,8 @@ DAG для Added/Modified Elements ETL pipeline (ELT-версия, без pandas
 SQL-файлы: dags/etl_pipelines/sql/added_elements/transform/
 
 Инкрементальная стратегия: параметры %(last_date)s / %(run_date)s = Airflow
-data_interval_start / data_interval_end (2-часовые окна).
+data_interval_start / data_interval_end (суточные окна, запуск раз в сутки
+после 01:00 UTC — обработка данных за предыдущий день).
 
 Первоначальная историческая загрузка: scripts/backfill_added_elements.py
 (запущен отдельно, данные уже в БД).
@@ -59,8 +60,10 @@ _DEFAULT_ARGS = {
     # CronTriggerTimetable: он даёт  нулевой data_interval [slot, slot),
     # из-за чего окно `WHERE date >= start AND date < end` всегда пустое.
     # Явно используем CronDataIntervalTimetable: data_interval =
-    # [prev_slot, current_slot), т.е. 2-часовое окно "до текущего слота".
-    schedule=CronDataIntervalTimetable("17 * * * *", timezone="UTC"),
+    # [prev_slot, current_slot), т.е. суточное окно "до текущего слота".
+    # Раз в сутки в 01:40 UTC — обрабатываем данные за предыдущий день
+    # (data_interval = [вчера 01:40 UTC, сегодня 01:40 UTC)).
+    schedule=CronDataIntervalTimetable("40 1 * * *", timezone="UTC"),
     catchup=False,              # история залита через backfill_added_elements.py
     max_active_runs=1,          # не запускать параллельно (FDW + STG LAG)
     tags=["elements", "etl", "analytics", "incremental", "elt", "no-pandas"],
